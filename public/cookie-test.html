@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cookie Test</title>
+</head>
+<body>
+    <h1>Admin Cookie Test</h1>
+    <button onclick="testLogin()">Test Login</button>
+    <button onclick="testAuth()">Test Auth Check</button>
+    <div id="result"></div>
+
+    <script>
+        async function testLogin() {
+            try {
+                const response = await fetch('/api/auth/admin-login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        email: 'admin@gmail.com',
+                        password: 'admin',
+                        tenantSlug: 'kitchen'
+                    }),
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                console.log('Login result:', data);
+            } catch (error) {
+                document.getElementById('result').innerHTML = 'Login error: ' + error.message;
+            }
+        }
+
+        async function testAuth() {
+            try {
+                const response = await fetch('/api/auth/check-admin', {
+                    credentials: 'include'
+                });
+                
+                const data = await response.json();
+                document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                console.log('Auth check result:', data);
+            } catch (error) {
+                document.getElementById('result').innerHTML = 'Auth check error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
