@@ -1,0 +1,20 @@
+{
+  "name": "orderweb-net",
+  "version": "1.0.0",
+  "description": "Cloud-based Order Management System",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server -p 8080",
+    "deploy": "echo 'Deploy to your preferred cloud platform'"
+  },
+  "keywords": [
+    "cloud",
+    "order-management",
+    "web-app"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
