@@ -580,7 +580,7 @@ Endpoints:
             </div>
 
             {/* Regenerate API Key */}
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-semibold text-gray-800 text-sm mb-1">Security</h4>
@@ -595,30 +595,6 @@ Endpoints:
                 >
                   {generating ? 'Regenerating...' : 'Regenerate API Key'}
                 </Button>
-              </div>
-            </div>
-
-            {/* Instructions */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 text-sm mb-3 flex items-center gap-2">
-                <Info className="w-4 h-4" />
-                How to Connect Your POS
-              </h4>
-              <div className="space-y-2 text-sm text-blue-900">
-                <p><strong>Step 1:</strong> Copy the WebSocket URL, Restaurant ID, and API Key from above</p>
-                <p><strong>Step 2:</strong> Open your POS software and navigate to "Integrations" or "Settings"</p>
-                <p><strong>Step 3:</strong> Find the "OrderWeb.net Integration" section</p>
-                <p><strong>Step 4:</strong> Paste the credentials and click "Connect"</p>
-                <p><strong>Step 5:</strong> Wait for the green "Connected" status above</p>
-                <div className="mt-3 p-3 bg-blue-100 rounded-md">
-                  <p className="font-semibold mb-2">💡 Your POS will receive:</p>
-                  <ul className="text-xs space-y-1 ml-4">
-                    <li>• 🛎️ Live customer orders (instant via WebSocket)</li>
-                    <li>• 🎁 Gift card balance checks and redemptions (via API)</li>
-                    <li>• ⭐ Loyalty points lookup and updates (via API)</li>
-                    <li>• 📊 Ability to send daily reports back to cloud (via API)</li>
-                  </ul>
-                </div>
               </div>
             </div>
 
