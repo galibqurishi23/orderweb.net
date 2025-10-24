@@ -2498,6 +2498,15 @@ const OrderSummary = React.memo(function OrderSummary({
                   </p>
                 </div>
 
+                {/* Delivery Fee Notice - Only show if delivery and fee > 0 */}
+                {(selectedOrderType === 'delivery' || (selectedOrderType === 'advance' && advanceFulfillmentType === 'delivery')) && deliveryFee > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <p className="text-sm text-blue-900 font-medium">
+                      Delivery Fee: {currencySymbol}{deliveryFee.toFixed(2)}
+                    </p>
+                  </div>
+                )}
+
                 {/* Payment Method */}
                 <div>
                   <Label>Payment Method</Label>
