@@ -35,6 +35,10 @@ import {
 import Link from 'next/link';
 import type { Tenant } from '@/lib/types';
 
+// Force dynamic rendering to prevent caching issues
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default function RestaurantsPage() {
   const [restaurants, setRestaurants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,23 +77,59 @@ export default function RestaurantsPage() {
   });
 
   useEffect(() => {
+    console.log('🎯 RestaurantsPage mounted, fetching restaurants...');
     fetchRestaurants();
+    
+    // Force a refresh if still loading after 5 seconds
+    const timeout = setTimeout(() => {
+      if (loading) {
+        console.warn('⚠️ Still loading after 5 seconds, retrying...');
+        fetchRestaurants();
+      }
+    }, 5000);
+    
+    return () => clearTimeout(timeout);
   }, []);
 
   const fetchRestaurants = async () => {
+    console.log('🔄 fetchRestaurants called, loading:', loading);
+    setLoading(true);
+    setError(null);
+    
     try {
-      const response = await fetch('/api/super-admin/tenants');
+      console.log('🔄 Fetching restaurants from API...');
+      const response = await fetch('/api/super-admin/tenants', {
+        method: 'GET',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        },
+        cache: 'no-store'
+      });
+      
+      console.log('📥 Response status:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const result = await response.json();
+      console.log('📄 Result:', result);
       
       if (result.success) {
+        console.log('✅ Setting restaurants:', result.data);
         setRestaurants(result.data);
+        setError(null);
       } else {
+        console.error('❌ API returned error:', result.error);
         setError(result.error || 'Failed to fetch restaurants');
       }
     } catch (err) {
-      setError('Failed to connect to server');
-      console.error('Error fetching restaurants:', err);
+      console.error('❌ Error fetching restaurants:', err);
+      setError('Failed to connect to server: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
+      console.log('🏁 Setting loading to false');
       setLoading(false);
     }
   };

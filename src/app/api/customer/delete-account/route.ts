@@ -4,15 +4,13 @@ import db from '@/lib/db';
 
 export async function DELETE(request: NextRequest) {
   try {
-    // Get JWT token from cookie
     const token = request.cookies.get('customer_token')?.value;
     
     if (!token) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
     const tenantId = decoded.tenantId;
 

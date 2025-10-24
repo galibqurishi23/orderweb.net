@@ -57,11 +57,13 @@ export async function GET(request: NextRequest) {
       }
       
       // Validate that this is actually an admin session
-      if (sessionData.role !== 'admin') {
-        console.log('🚫 Not an admin role:', sessionData.role);
+      // Accept both 'admin' and 'owner' roles
+      const validRoles = ['admin', 'owner', 'manager'];
+      if (!validRoles.includes(sessionData.role)) {
+        console.log('🚫 Not an authorized role:', sessionData.role);
         return NextResponse.json({
           authenticated: false,
-          error: 'Not an admin user'
+          error: 'Not an authorized user'
         });
       }
       

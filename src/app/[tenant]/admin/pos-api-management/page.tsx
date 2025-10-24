@@ -145,18 +145,6 @@ export default function POSApiManagementPage({ params }: { params: { tenant: str
         </p>
       </div>
 
-      <Alert className="mb-6 border-orange-200 bg-orange-50">
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          <div className="font-medium mb-2">Current Performance Issue:</div>
-          <ul className="text-sm space-y-1 list-disc list-inside text-gray-700">
-            <li>Polling method: POS checks for orders every 30+ seconds</li>
-            <li>Customer places order → waits 30+ seconds → appears in POS</li>
-            <li>Solution: Implement webhook for instant 0-second delivery!</li>
-          </ul>
-        </AlertDescription>
-      </Alert>
-
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

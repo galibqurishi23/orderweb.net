@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import PhoneLoyaltyService from '../../../../lib/phone-loyalty-service';
+import { broadcastLoyaltyUpdate } from '@/lib/websocket-broadcaster';
 
 /**
  * Phone Lookup - Get customer loyalty profile by phone number
@@ -55,6 +56,12 @@ export async function GET(request: NextRequest) {
         lastOrderDate: customer.lastOrderDate,
         totalOrders: customer.totalOrders,
         totalSpent: customer.totalSpent
+      }
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+        'Pragma': 'no-cache',
+        'Expires': '0'
       }
     });
 
@@ -167,6 +174,24 @@ export async function PUT(request: NextRequest) {
 
       if (success) {
         const customer = await PhoneLoyaltyService.lookupByPhone(phone, tenantId);
+        
+        // Broadcast loyalty update for live sync
+        if (customer) {
+          await broadcastLoyaltyUpdate(tenantId, {
+            customerId: customer.customerId,
+            customerPhone: phone,
+            customerName: customer.customerName,
+            pointsChange: points,
+            newBalance: customer.pointsBalance,
+            totalPointsEarned: customer.totalPointsEarned,
+            totalPointsRedeemed: customer.totalPointsRedeemed,
+            transactionType: 'add',
+            reason: reason,
+            orderId: orderId,
+            orderTotal: orderTotal
+          });
+        }
+        
         return NextResponse.json({
           success: true,
           message: `Added ${points} points`,
@@ -190,6 +215,23 @@ export async function PUT(request: NextRequest) {
 
       if (result.success) {
         const customer = await PhoneLoyaltyService.lookupByPhone(phone, tenantId);
+        
+        // Broadcast loyalty update for live sync
+        if (customer) {
+          await broadcastLoyaltyUpdate(tenantId, {
+            customerId: customer.customerId,
+            customerPhone: phone,
+            customerName: customer.customerName,
+            pointsChange: -points,
+            newBalance: customer.pointsBalance,
+            totalPointsEarned: customer.totalPointsEarned,
+            totalPointsRedeemed: customer.totalPointsRedeemed,
+            transactionType: 'redeem',
+            reason: reason,
+            orderId: orderId
+          });
+        }
+        
         return NextResponse.json({
           success: true,
           message: result.message,

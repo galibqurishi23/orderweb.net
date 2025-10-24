@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
     const tenantId = decoded.tenantId;
 
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
     const tenantId = decoded.tenantId;
 

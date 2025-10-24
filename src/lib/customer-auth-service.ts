@@ -12,7 +12,10 @@ interface CustomerAuthResult {
 }
 
 export class CustomerAuthService {
-  private static readonly JWT_SECRET: string = process.env.NEXTAUTH_SECRET || 'customer-secret-key';
+  // Use getter to evaluate at runtime, not at class load time
+  private static get JWT_SECRET(): string {
+    return process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'customer-secret-key';
+  }
   private static readonly TOKEN_EXPIRY: string = '7d'; // 7 days
   private static readonly MAX_LOGIN_ATTEMPTS: number = 5;
   private static readonly LOCKOUT_DURATION: number = 15; // minutes
@@ -268,9 +271,16 @@ export class CustomerAuthService {
    */
   static async verifyToken(token: string): Promise<CustomerAuthResult> {
     try {
+      // Debug logging - write to stdout
+      process.stdout.write(`[VERIFY-TOKEN] Starting verification\n`);
+      process.stdout.write(`[VERIFY-TOKEN] Secret: ${this.JWT_SECRET.substring(0, 30)}...\n`);
+      process.stdout.write(`[VERIFY-TOKEN] Token: ${token.substring(0, 50)}...\n`);
+      
       const decoded = jwt.verify(token, CustomerAuthService.JWT_SECRET) as any;
+      process.stdout.write(`[VERIFY-TOKEN] Decoded: ${JSON.stringify(decoded)}\n`);
       
       if (decoded.type !== 'customer') {
+        process.stdout.write(`[VERIFY-TOKEN] Invalid type: ${decoded.type}\n`);
         return { success: false, error: 'Invalid token type' };
       }
 
@@ -282,11 +292,13 @@ export class CustomerAuthService {
 
       const customer = (customers as any[])[0];
       if (!customer) {
+        process.stdout.write('[VERIFY-TOKEN] Customer not found\n');
         return { success: false, error: 'Customer not found' };
       }
 
+      process.stdout.write(`[VERIFY-TOKEN] Success: ${customer.email}\n`);
       // Remove password from response
-      const { password: _, ...customerData } = customer;
+      const { password: _, ...customerData} = customer;
 
       return {
         success: true,
@@ -294,6 +306,7 @@ export class CustomerAuthService {
       };
 
     } catch (error) {
+      process.stdout.write(`[VERIFY-TOKEN] ERROR: ${error instanceof Error ? error.message : error}\n`);
       return { success: false, error: 'Invalid or expired token' };
     }
   }

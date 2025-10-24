@@ -20,7 +20,8 @@ import {
   Crown,
   Calendar,
   Phone,
-  Mail
+  Mail,
+  RefreshCw
 } from "lucide-react";
 
 interface Customer {
@@ -81,6 +82,38 @@ export default function CustomerDashboard({ params }: { params: { tenant: string
   const [loyaltyTransactions, setLoyaltyTransactions] = useState<LoyaltyTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [tenantName, setTenantName] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Auto-refresh loyalty data every 5 seconds for real-time updates
+  useEffect(() => {
+    if (!customer) return;
+
+    const refreshLoyaltyData = async () => {
+      try {
+        const loyaltyResponse = await fetch(`/api/customer/loyalty`, {
+          credentials: 'include',
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        const loyaltyData = await loyaltyResponse.json();
+        if (loyaltyData.success) {
+          const loyalty = loyaltyData.loyalty;
+          setLoyaltyData({
+            points_balance: loyalty.pointsBalance,
+            tier_level: loyalty.tierLevel,
+            total_points_earned: loyalty.totalPointsEarned,
+            total_points_redeemed: loyalty.totalPointsRedeemed,
+            next_tier_points: loyalty.nextTierPoints
+          });
+        }
+      } catch (error) {
+        console.error('Failed to refresh loyalty data:', error);
+      }
+    };
+
+    // Refresh every 5 seconds
+    const interval = setInterval(refreshLoyaltyData, 5000);
+    return () => clearInterval(interval);
+  }, [customer]);
 
   useEffect(() => {
     checkAuthentication();
@@ -89,20 +122,69 @@ export default function CustomerDashboard({ params }: { params: { tenant: string
 
   const checkAuthentication = async () => {
     try {
-      const response = await fetch('/api/customer/auth/logout', {
-        method: 'GET'
+      console.log('[Dashboard] Checking authentication...');
+      
+      // Check if authenticated using the proper API
+      const authResponse = await fetch('/api/customer/check-auth', {
+        credentials: 'include',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
       });
-      const data = await response.json();
+      
+      console.log('[Dashboard] Auth response status:', authResponse.status);
+      const authData = await authResponse.json();
+      console.log('[Dashboard] Auth data:', authData);
 
-      if (!data.authenticated) {
+      if (!authData.authenticated) {
+        console.log('[Dashboard] Not authenticated, redirecting to menu');
+        setLoading(false);
         router.push(`/${resolvedParams.tenant}`);
         return;
       }
 
-      setCustomer(data.customer);
-      await fetchDashboardData(data.customer.id);
+      console.log('[Dashboard] Authenticated! Fetching profile...');
+
+      // Fetch customer profile
+      const profileResponse = await fetch('/api/customer/profile', {
+        credentials: 'include'
+      });
+      
+      console.log('[Dashboard] Profile response status:', profileResponse.status);
+      const profileData = await profileResponse.json();
+      console.log('[Dashboard] Profile data:', profileData);
+      
+      if (profileData.profile) {
+        const profile = profileData.profile;
+        setCustomer({
+          id: profile.id,
+          name: `${profile.firstName} ${profile.lastName}`,
+          email: profile.email,
+          phone: profile.phone,
+          customer_segment: 'regular',
+          total_orders: profile.totalOrders,
+          total_spent: 0,
+          created_at: profile.memberSince
+        });
+        
+        setLoyaltyData({
+          points_balance: profile.totalPoints,
+          tier_level: profile.loyaltyTier,
+          total_points_earned: profile.totalPoints,
+          total_points_redeemed: 0,
+          next_tier_points: 0
+        });
+
+        // Fetch dashboard data
+        await fetchDashboardData(profile.id);
+      } else {
+        console.error('[Dashboard] No profile data received');
+        setLoading(false);
+        router.push(`/${resolvedParams.tenant}`);
+      }
     } catch (error) {
-      console.error('Auth check failed:', error);
+      console.error('[Dashboard] Auth check error:', error);
+      setLoading(false);
       router.push(`/${resolvedParams.tenant}`);
     }
   };
@@ -173,6 +255,31 @@ export default function CustomerDashboard({ params }: { params: { tenant: string
       router.push(`/${resolvedParams.tenant}`);
     } catch (error) {
       console.error('Logout failed:', error);
+    }
+  };
+
+  const handleRefreshLoyalty = async () => {
+    setRefreshing(true);
+    try {
+      const loyaltyResponse = await fetch(`/api/customer/loyalty`, {
+        credentials: 'include',
+        headers: { 'Cache-Control': 'no-cache' }
+      });
+      const loyaltyData = await loyaltyResponse.json();
+      if (loyaltyData.success) {
+        const loyalty = loyaltyData.loyalty;
+        setLoyaltyData({
+          points_balance: loyalty.pointsBalance,
+          tier_level: loyalty.tierLevel,
+          total_points_earned: loyalty.totalPointsEarned,
+          total_points_redeemed: loyalty.totalPointsRedeemed,
+          next_tier_points: loyalty.nextTierPoints
+        });
+      }
+    } catch (error) {
+      console.error('Failed to refresh loyalty data:', error);
+    } finally {
+      setTimeout(() => setRefreshing(false), 500); // Show animation briefly
     }
   };
 
@@ -277,9 +384,15 @@ export default function CustomerDashboard({ params }: { params: { tenant: string
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
-              <Link href={`/${resolvedParams.tenant}`} className="text-lg font-semibold text-gray-900 hover:text-blue-600">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => router.push(`/${resolvedParams.tenant}`)}
+                className="hover:bg-blue-50 hover:text-blue-600 border-blue-200"
+              >
+                <ShoppingBag className="w-4 h-4 mr-2" />
                 Back to Menu
-              </Link>
+              </Button>
               <span className="text-gray-400">•</span>
               <span className="text-gray-600">My Account</span>
             </div>
@@ -331,13 +444,24 @@ export default function CustomerDashboard({ params }: { params: { tenant: string
           <Card className="border-blue-200 bg-blue-50">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-blue-800">Points Balance</CardTitle>
-              <Gift className="h-4 w-4 text-blue-600" />
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleRefreshLoyalty}
+                  disabled={refreshing}
+                  className="p-1 hover:bg-blue-100 rounded-full transition-colors"
+                  title="Refresh points"
+                >
+                  <RefreshCw className={`h-4 w-4 text-blue-600 ${refreshing ? 'animate-spin' : ''}`} />
+                </button>
+                <Gift className="h-4 w-4 text-blue-600" />
+              </div>
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-blue-600">{loyaltyData?.points_balance?.toLocaleString() || '0'}</div>
               <p className="text-xs text-blue-600">
                 Worth {formatCurrency((loyaltyData?.points_balance || 0) * 0.01)}
               </p>
+              <p className="text-xs text-blue-500 mt-1">Auto-refreshes every 5s</p>
             </CardContent>
           </Card>
 

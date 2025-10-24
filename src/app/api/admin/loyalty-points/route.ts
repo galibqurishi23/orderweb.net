@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
 import PhoneLoyaltyService from '@/lib/phone-loyalty-service';
 import { RowDataPacket } from 'mysql2';
+import { broadcastLoyaltyUpdate } from '@/lib/websocket-broadcaster';
 
 interface Customer extends RowDataPacket {
   id: string;
@@ -13,6 +14,13 @@ interface Customer extends RowDataPacket {
 export async function POST(request: NextRequest) {
   try {
     const { customerId, points, reason, tenantId } = await request.json();
+
+    console.log('🎯 [LOYALTY POINTS] Request received:', {
+      customerId,
+      points,
+      reason,
+      tenantId
+    });
 
     // Validate input
     if (!customerId || !points || !tenantId) {
@@ -71,6 +79,13 @@ export async function POST(request: NextRequest) {
       [customerId, actualTenantId]
     );
 
+    console.log('🔍 [LOYALTY POINTS] Customer query result:', {
+      customerId,
+      actualTenantId,
+      found: customerResult[0].length,
+      customer: customerResult[0][0]
+    });
+
     if (customerResult[0].length === 0) {
       return NextResponse.json(
         { success: false, error: 'Customer not found' },
@@ -79,6 +94,13 @@ export async function POST(request: NextRequest) {
     }
 
     const customer = customerResult[0][0];
+
+    console.log('👤 [LOYALTY POINTS] Customer details:', {
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone,
+      hasPhone: !!customer.phone
+    });
 
     if (!customer.phone) {
       return NextResponse.json(
@@ -89,6 +111,13 @@ export async function POST(request: NextRequest) {
 
     // Check if customer is enrolled in loyalty program
     let loyaltyCustomer = await PhoneLoyaltyService.lookupByPhone(customer.phone, actualTenantId);
+
+    console.log('🔎 [LOYALTY POINTS] Loyalty lookup result:', {
+      phone: customer.phone,
+      tenantId: actualTenantId,
+      found: !!loyaltyCustomer,
+      loyaltyCustomer
+    });
 
     if (!loyaltyCustomer) {
       // Auto-enroll customer in loyalty program
@@ -125,6 +154,21 @@ export async function POST(request: NextRequest) {
 
     // Get updated loyalty data
     const updatedLoyalty = await PhoneLoyaltyService.lookupByPhone(customer.phone, actualTenantId);
+
+    // Broadcast real-time update to customer dashboard
+    await broadcastLoyaltyUpdate(actualTenantId, {
+      customerId: customer.id,
+      customerPhone: customer.phone,
+      customerName: customer.name,
+      pointsChange: points,
+      newBalance: updatedLoyalty?.pointsBalance || 0,
+      totalPointsEarned: updatedLoyalty?.totalPointsEarned || 0,
+      totalPointsRedeemed: updatedLoyalty?.totalPointsRedeemed || 0,
+      transactionType: 'bonus',
+      reason: reason || 'Admin awarded points'
+    });
+
+    console.log(`✅ Loyalty update broadcasted for ${customer.name} - ${points} points added`);
 
     return NextResponse.json({
       success: true,

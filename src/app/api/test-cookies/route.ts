@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
+  const jwtSecret = process.env.JWT_SECRET;
+  const nextAuthSecret = process.env.NEXTAUTH_SECRET;
+  
   const response = NextResponse.json({
     message: 'Test cookie set',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    JWT_SECRET_SET: !!jwtSecret,
+    JWT_SECRET_VALUE: jwtSecret ? jwtSecret.substring(0, 30) + '...' : 'NOT SET',
+    NEXTAUTH_SECRET_SET: !!nextAuthSecret,
+    NODE_ENV: process.env.NODE_ENV
   });
   
   response.cookies.set('test-cookie', 'test-value-' + Date.now(), {

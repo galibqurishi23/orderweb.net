@@ -241,7 +241,7 @@ export const TenantDataProvider = ({ children }: { children: ReactNode }) => {
             if (!tenantData?.id || isAdminRoute) return;
             
             try {
-                const response = await fetch('/api/customer/auth/logout', {
+                const response = await fetch('/api/customer/check-auth', {
                     method: 'GET',
                     credentials: 'include'
                 });

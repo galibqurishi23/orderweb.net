@@ -247,28 +247,27 @@ export default function PhoneLoyaltyPOS() {
         })
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && data.customer) {
-          setCustomer(data.customer)
-          setTransactions(data.transactions || [])
-          setPointsToAdd('')
-          setOrderValue('')
-          toast({
-            title: "Success",
-            description: `Added ${points} points to customer account`,
-          })
-        } else {
-          throw new Error('Failed to add points')
-        }
+      const data = await response.json()
+
+      if (response.ok && data.success) {
+        // Refresh customer data after adding points
+        await searchCustomer()
+        
+        setPointsToAdd('')
+        setOrderValue('')
+        
+        toast({
+          title: "✅ Points Added Successfully",
+          description: `Added ${points} points. New balance: ${data.customer?.pointsBalance || customer.pointsBalance + points} points`,
+        })
       } else {
-        throw new Error('Failed to add points')
+        throw new Error(data.error || 'Failed to add points')
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding points:', error)
       toast({
-        title: "Error",
-        description: "Failed to add points. Please try again.",
+        title: "❌ Error Adding Points",
+        description: error.message || "Failed to add points. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -330,27 +329,26 @@ export default function PhoneLoyaltyPOS() {
         })
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success && data.customer) {
-          setCustomer(data.customer)
-          setTransactions(data.transactions || [])
-          setPointsToRedeem('')
-          toast({
-            title: "Success",
-            description: `Redeemed ${points} points successfully`,
-          })
-        } else {
-          throw new Error('Failed to redeem points')
-        }
+      const data = await response.json()
+
+      if (response.ok && data.success) {
+        // Refresh customer data after redeeming points
+        await searchCustomer()
+        
+        setPointsToRedeem('')
+        
+        toast({
+          title: "✅ Points Redeemed Successfully",
+          description: `Redeemed ${points} points. New balance: ${data.customer?.pointsBalance || customer.pointsBalance - points} points`,
+        })
       } else {
-        throw new Error('Failed to redeem points')
+        throw new Error(data.error || 'Failed to redeem points')
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error redeeming points:', error)
       toast({
-        title: "Error",
-        description: "Failed to redeem points. Please try again.",
+        title: "❌ Error Redeeming Points",
+        description: error.message || "Failed to redeem points. Please try again.",
         variant: "destructive",
       })
     } finally {

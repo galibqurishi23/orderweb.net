@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import db from '@/lib/db';
+import { PhoneLoyaltyService } from '@/lib/phone-loyalty-service';
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,8 +13,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
+    const tenantId = decoded.tenantId;
 
     // Get customer profile
     const customerQuery = `
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
     `;
 
     const customerQueryResult = await db.query(customerQuery, [customerId]);
-    const customers = customerQueryResult[0]; // Get the rows from the result tuple
+    const customers = customerQueryResult[0];
     
     if (!customers || (customers as any[]).length === 0) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
@@ -42,7 +44,27 @@ export async function GET(request: NextRequest) {
 
     const customer = (customers as any[])[0];
 
-    // Format response using the new first_name and last_name fields
+    // Get loyalty data using PhoneLoyaltyService (same as admin uses)
+    let loyalty = { points_balance: 0, tier_level: 'bronze', total_points_earned: 0, total_points_redeemed: 0 };
+    
+    if (customer.phone && tenantId) {
+      try {
+        const loyaltyData = await PhoneLoyaltyService.lookupByPhone(customer.phone, tenantId);
+        if (loyaltyData) {
+          loyalty = {
+            points_balance: loyaltyData.pointsBalance || 0,
+            tier_level: loyaltyData.tierLevel || 'bronze',
+            total_points_earned: loyaltyData.totalPointsEarned || 0,
+            total_points_redeemed: loyaltyData.totalPointsRedeemed || 0
+          };
+        }
+      } catch (loyaltyError) {
+        console.error('Error fetching loyalty data:', loyaltyError);
+        // Continue with default values
+      }
+    }
+
+    // Format response
     const profile = {
       id: customer.id,
       firstName: customer.first_name || '',
@@ -50,8 +72,8 @@ export async function GET(request: NextRequest) {
       email: customer.email,
       phone: customer.phone || '',
       dateOfBirth: customer.date_of_birth || '',
-      loyaltyTier: 'bronze', // Default tier
-      totalPoints: 0, // Default points
+      loyaltyTier: loyalty.tier_level || 'bronze',
+      totalPoints: loyalty.points_balance || 0,
       totalOrders: customer.total_orders || 0,
       memberSince: customer.created_at,
       preferences: {
@@ -82,31 +104,38 @@ export async function PUT(request: NextRequest) {
     }
 
     // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
 
     const body = await request.json();
     const { firstName, lastName, email, phone, dateOfBirth, preferences } = body;
 
-    // Update customer basic info using the new first_name and last_name fields
+    // Update customer basic info
     const updateCustomerQuery = `
       UPDATE customers 
-      SET first_name = ?, last_name = ?, email = ?, phone = ?, date_of_birth = ?, preferences = ?, marketing_consent = ?
+      SET first_name = ?, last_name = ?, name = ?, email = ?, phone = ?, date_of_birth = ?, 
+          preferences = ?, marketing_consent = ?, updated_at = NOW()
       WHERE id = ?
     `;
+
+    const fullName = `${firstName} ${lastName}`.trim();
 
     await db.query(updateCustomerQuery, [
       firstName,
       lastName,
+      fullName,
       email,
       phone,
       dateOfBirth || null,
-      preferences.dietaryRestrictions || '',
-      preferences.emailNotifications || true,
+      preferences?.dietaryRestrictions || '',
+      preferences?.emailNotifications !== false,
       customerId
     ]);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true,
+      message: 'Profile updated successfully' 
+    });
 
   } catch (error) {
     console.error('Profile update error:', error);

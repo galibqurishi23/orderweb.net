@@ -1,51 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-
-// Helper function to normalize phone number
-function normalizePhoneNumber(phone: string): string {
-  if (!phone) return '';
-  
-  // Remove all non-numeric characters
-  const cleaned = phone.replace(/\D/g, '');
-  
-  // Convert common international formats
-  if (cleaned.startsWith('44') && cleaned.length === 13) {
-    return cleaned; // UK format: 447890123456
-  } else if (cleaned.startsWith('0') && cleaned.length === 11) {
-    return '44' + cleaned.substring(1); // UK format: 07890123456 -> 447890123456
-  } else if (cleaned.startsWith('1') && cleaned.length === 11) {
-    return cleaned; // US format: 14155551234
-  } else if (cleaned.length === 10) {
-    return '1' + cleaned; // US format: 4155551234 -> 14155551234
-  }
-  
-  return cleaned;
-}
-
-// Helper function to format phone number for display
-function formatPhoneForDisplay(phone: string): string {
-  if (!phone) return '';
-  
-  const normalized = normalizePhoneNumber(phone);
-  
-  if (normalized.startsWith('44')) {
-    // UK format: 447890123456 -> +44 7890 123456
-    return '+44 ' + normalized.substring(2, 6) + ' ' + normalized.substring(6);
-  } else if (normalized.startsWith('1')) {
-    // US format: 14155551234 -> +1 (415) 555-1234
-    return '+1 (' + normalized.substring(1, 4) + ') ' + normalized.substring(4, 7) + '-' + normalized.substring(7);
-  }
-  
-  return '+' + normalized;
-}
-
-// Generate loyalty card number
-function generateLoyaltyCardNumber(phoneOrId: string, tierName: string = 'Bronze'): string {
-  const lastSix = phoneOrId.slice(-6);
-  return `TIK-${tierName.toUpperCase()}-${lastSix}`;
-}
+import { CustomerAuthService } from '@/lib/customer-auth-service';
 
 export async function POST(request: NextRequest) {
   try {
@@ -77,13 +31,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Normalize phone number for consistency
-    const normalizedPhone = normalizePhoneNumber(phone || '');
-    const formattedPhone = formatPhoneForDisplay(phone || '');
-
     // Use the CustomerAuthService for registration
-    const { CustomerAuthService } = await import('@/lib/customer-auth-service');
-    
     const result = await CustomerAuthService.register(
       name,
       email,
@@ -92,29 +40,40 @@ export async function POST(request: NextRequest) {
       tenantId
     );
 
-    if (result.success && result.customer) {
+    if (result.success && result.customer && result.token) {
       console.log('Registration successful for:', email);
 
-      return NextResponse.json({
+      const response = NextResponse.json({
         success: true,
+        message: 'Account created successfully! You have received 100 loyalty points as a welcome bonus.',
         customer: {
           id: result.customer.id,
           name: result.customer.name,
           email: result.customer.email,
-          phone: result.customer.phone,
-          loyaltyCardNumber: result.customer.loyaltyCardNumber
-        },
-        message: 'Account created successfully! Welcome bonus of 100 points added.'
+          phone: result.customer.phone
+        }
       });
+
+      // Set the authentication cookie
+      response.cookies.set('customer_token', result.token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+        path: '/'
+      });
+
+      return response;
     } else {
+      console.error('Registration failed:', result.error);
       return NextResponse.json({
         success: false,
-        error: result.error || 'Registration failed'
+        error: result.error || 'Registration failed. Please try again.'
       }, { status: 400 });
     }
 
   } catch (error) {
-    console.error('Customer registration API error:', error);
+    console.error('Registration API error:', error);
     return NextResponse.json({
       success: false,
       error: 'Registration failed. Please try again.'

@@ -32,29 +32,46 @@ export async function GET(request: NextRequest) {
       }, { status: 404 });
     }
 
-    // Get or create loyalty data
-    let [loyaltyResult] = await db.execute(
-      'SELECT * FROM customer_loyalty WHERE customer_id = ? AND tenant_id = ?',
-      [customerId, tenantId]
-    );
+    // Prefer the up-to-date customer_loyalty_points table (used by add/redeem flows)
+    // If not present, fall back to the legacy customer_loyalty table and create it when needed
+    let loyaltyData: any = null;
 
-    let loyaltyData = (loyaltyResult as any[])[0];
+    // Try to read from customer_loyalty_points first
+    try {
+      const [clpResult] = await db.execute(
+        'SELECT customer_id, tenant_id, points_balance, tier_level, total_points_earned, total_points_redeemed FROM customer_loyalty_points WHERE customer_id = ? AND tenant_id = ?',
+        [customerId, tenantId]
+      );
+      loyaltyData = (clpResult as any[])[0] || null;
+    } catch (err) {
+      console.error('Error reading customer_loyalty_points:', err);
+      loyaltyData = null;
+    }
 
-    // If no loyalty data exists, create it
+    // If no record in customer_loyalty_points, fall back to legacy customer_loyalty
     if (!loyaltyData) {
-      await db.execute(`
-        INSERT INTO customer_loyalty (
-          customer_id, tenant_id, points_balance, tier_level, 
-          total_points_earned, total_points_redeemed, created_at, updated_at
-        ) VALUES (?, ?, 0, 'bronze', 0, 0, NOW(), NOW())
-      `, [customerId, tenantId]);
-
-      // Fetch the newly created record
-      [loyaltyResult] = await db.execute(
+      let [legacyResult] = await db.execute(
         'SELECT * FROM customer_loyalty WHERE customer_id = ? AND tenant_id = ?',
         [customerId, tenantId]
       );
-      loyaltyData = (loyaltyResult as any[])[0];
+
+      loyaltyData = (legacyResult as any[])[0] || null;
+
+      // If legacy doesn't exist either, create legacy record to keep backward compatibility
+      if (!loyaltyData) {
+        await db.execute(`
+          INSERT INTO customer_loyalty (
+            customer_id, tenant_id, points_balance, tier_level, 
+            total_points_earned, total_points_redeemed, created_at, updated_at
+          ) VALUES (?, ?, 0, 'bronze', 0, 0, NOW(), NOW())
+        `, [customerId, tenantId]);
+
+        [legacyResult] = await db.execute(
+          'SELECT * FROM customer_loyalty WHERE customer_id = ? AND tenant_id = ?',
+          [customerId, tenantId]
+        );
+        loyaltyData = (legacyResult as any[])[0] || null;
+      }
     }
 
     // Calculate tier thresholds and next tier points

@@ -161,6 +161,7 @@ export class PhoneLoyaltyService {
           c.created_at as joined_date,
           clp.points_balance,
           clp.total_points_earned,
+          clp.total_points_redeemed,
           clp.tier_level,
           c.total_orders,
           c.total_spent,
@@ -171,7 +172,7 @@ export class PhoneLoyaltyService {
           ls.diamond_min_points
         FROM loyalty_phone_lookup lpl
         LEFT JOIN customers c ON lpl.customer_id = c.id
-        LEFT JOIN customer_loyalty_points clp ON lpl.customer_id = clp.customer_id
+        LEFT JOIN customer_loyalty_points clp ON lpl.customer_id = clp.customer_id AND lpl.tenant_id = clp.tenant_id
         LEFT JOIN loyalty_settings ls ON lpl.tenant_id = ls.tenant_id
         WHERE lpl.normalized_phone = ? AND lpl.tenant_id = ? AND lpl.is_active = 1
       `, [normalizedPhone, tenantId]);
@@ -254,10 +255,10 @@ export class PhoneLoyaltyService {
 
       // Create loyalty points entry
       await connection.execute(`
-        INSERT INTO loyalty_points 
-        (phone, tenant_id, customer_id, customer_name, points_balance, tier_level)
-        VALUES (?, ?, ?, ?, 0, 'bronze')
-      `, [phone, tenantId, customerId, customerName]);
+        INSERT INTO customer_loyalty_points 
+        (customer_id, tenant_id, points_balance, total_points_earned, total_points_redeemed, tier_level)
+        VALUES (?, ?, 0, 0, 0, 'bronze')
+      `, [customerId, tenantId]);
 
       // Add welcome bonus points
       const [settingsResult] = await connection.execute(
@@ -559,18 +560,18 @@ export class PhoneLoyaltyService {
         SELECT 
           id,
           phone,
-          transaction_type,
+          operation_type as transaction_type,
           points_amount,
-          points_balance_before,
-          points_balance_after,
-          reason,
-          order_total,
-          order_id,
-          transaction_date as processed_at,
-          processed_by
+          0 as points_balance_before,
+          0 as points_balance_after,
+          transaction_reference as reason,
+          0 as order_total,
+          transaction_reference as order_id,
+          created_at as processed_at,
+          staff_member as processed_by
         FROM phone_loyalty_transactions
         WHERE phone = ? AND tenant_id = ?
-        ORDER BY transaction_date DESC
+        ORDER BY created_at DESC
         LIMIT ?
       `, [phone, tenantId, limit]);
 

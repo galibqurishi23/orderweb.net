@@ -22,18 +22,20 @@ import {
   Star,
   Trash2,
   AlertTriangle,
-  FileText
+  FileText,
+  RefreshCw
 } from "lucide-react";
 import { useTenant } from '@/context/TenantContext';
 
 interface Customer {
-  id: number;
+  id: string; // UUID
   name: string;
   email: string;
   phone?: string;
   total_orders: number;
   total_spent: number;
   points_balance?: number;
+  total_points_earned?: number;
   tier_level?: string;
   created_at: string;
   last_order_date?: string;
@@ -89,7 +91,9 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [deletingCustomerId, setDeletingCustomerId] = useState<number | null>(null);
+  const [deletingCustomerId, setDeletingCustomerId] = useState<string | null>(null);
+  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
   
   // Loyalty Points Dialog State
   const [loyaltyDialogOpen, setLoyaltyDialogOpen] = useState(false);
@@ -98,6 +102,51 @@ export default function CustomersPage() {
   const [loyaltyReason, setLoyaltyReason] = useState('');
   const [addingPoints, setAddingPoints] = useState(false);
 
+  // Add Customer Dialog State
+  const [addCustomerDialogOpen, setAddCustomerDialogOpen] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
+  const [newCustomerEmail, setNewCustomerEmail] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
+  const [newCustomerPassword, setNewCustomerPassword] = useState('');
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+
+  // WebSocket connection for live updates (using native WebSocket, not socket.io)
+  useEffect(() => {
+    if (!tenantData?.id) return;
+
+    // WebSocket server doesn't require API key for admin connections
+    // We'll use a simpler approach: poll the API with a short interval
+    // This is more reliable than trying to set up a WebSocket connection for admin UI
+    
+    // For now, just set connected to false and rely on polling
+    setWsConnected(false);
+
+    return () => {
+      // Cleanup
+    };
+  }, [tenantData?.id]);
+
+  // Auto-refresh polling for live updates (simplified approach)
+  useEffect(() => {
+    if (!tenantData?.id) {
+      console.log('⏸️ Auto-refresh paused - waiting for tenant data');
+      return;
+    }
+
+    console.log('📊 Starting auto-refresh for live loyalty updates');
+    const pollingInterval = setInterval(() => {
+      if (tenantData?.id) {
+        console.log('🔄 Auto-refreshing customer list for live updates');
+        fetchCustomers();
+      }
+    }, 5000); // Poll every 5 seconds for near-real-time updates
+
+    return () => {
+      console.log('🛑 Stopping auto-refresh');
+      clearInterval(pollingInterval);
+    };
+  }, [tenantData?.id]);
+
   useEffect(() => {
     if (tenantData) {
       fetchCustomers();
@@ -105,14 +154,33 @@ export default function CustomersPage() {
   }, [tenantData]);
 
   const fetchCustomers = async () => {
+    // Don't fetch if tenant data is not ready
+    if (!tenantData?.id) {
+      console.log('⏳ Waiting for tenant data...');
+      return;
+    }
+
     try {
-      const response = await fetch(`/api/admin/customers?tenantId=${tenantData?.id}`);
+      console.log('📥 Fetching customers for tenant:', tenantData.id);
+      
+      // Add timestamp to prevent browser caching
+      const timestamp = Date.now();
+      const response = await fetch(`/api/admin/customers?tenantId=${tenantData.id}&_t=${timestamp}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
       
       if (!response.ok) {
+        console.error('❌ Customer fetch failed:', response.status);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
       const data = await response.json();
+      console.log('✅ Customers fetched:', data.customers?.length || 0);
+      
       if (data.success && data.customers) {
         // Ensure customers have required fields with defaults
         const safeCustomers = data.customers.map((customer: any) => ({
@@ -127,17 +195,18 @@ export default function CustomersPage() {
         }));
         setCustomers(safeCustomers);
       } else {
+        console.warn('⚠️ No customers returned');
         setCustomers([]);
       }
     } catch (error) {
-      console.error('Error fetching customers:', error);
+      console.error('❌ Error fetching customers:', error);
       setCustomers([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const deleteCustomer = async (customerId: number, customerName: string) => {
+  const deleteCustomer = async (customerId: string, customerName: string) => {
     if (!confirm(`⚠️ Are you sure you want to delete customer "${customerName}"?\n\nThis will permanently delete:\n• Customer profile\n• All customer addresses\n• Customer loyalty points and transactions\n• All order history\n\nThis action cannot be undone!`)) {
       return;
     }
@@ -208,28 +277,103 @@ export default function CustomersPage() {
 
       const result = await response.json();
 
-      if (result.success) {
-        // Update the customer in the local state
+      if (response.ok && result.success) {
+        // Update the customer in the local state with all loyalty data
         setCustomers(customers.map(customer => 
           customer.id === selectedCustomer.id 
             ? { 
                 ...customer, 
                 points_balance: result.loyaltyUpdate.newBalance,
+                total_points_earned: result.loyaltyUpdate.newTotalEarned,
                 tier_level: result.loyaltyUpdate.tierLevel
               }
             : customer
         ));
 
-        alert(`Successfully added ${points} points to ${selectedCustomer.name}!`);
+        // Also update the selected customer to show in UI immediately
+        setSelectedCustomer({
+          ...selectedCustomer,
+          points_balance: result.loyaltyUpdate.newBalance,
+          total_points_earned: result.loyaltyUpdate.newTotalEarned,
+          tier_level: result.loyaltyUpdate.tierLevel
+        });
+
+        // Close dialog first, then show success message
         setLoyaltyDialogOpen(false);
+        setLoyaltyPoints('');
+        setLoyaltyReason('');
+        
+        alert(`✅ Successfully added ${points} points!\n\nNew balance: ${result.loyaltyUpdate.newBalance} points\nTier: ${result.loyaltyUpdate.tierLevel}`);
+        
+        // Refresh customer list to show updated data
+        setTimeout(() => fetchCustomers(), 500);
       } else {
-        alert(`Failed to add loyalty points: ${result.error}`);
+        throw new Error(result.error || 'Failed to add loyalty points');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error adding loyalty points:', error);
-      alert('Failed to add loyalty points. Please try again.');
+      alert(`❌ Failed to add loyalty points: ${error.message || 'Please try again'}`);
     } finally {
       setAddingPoints(false);
+    }
+  };
+
+  const createCustomer = async () => {
+    if (!newCustomerName || !newCustomerEmail || !tenantData) {
+      alert('Please fill in at least name and email');
+      return;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newCustomerEmail)) {
+      alert('Please enter a valid email address');
+      return;
+    }
+
+    setCreatingCustomer(true);
+    try {
+      console.log('Creating customer with tenantId:', tenantData.id);
+      
+      const response = await fetch('/api/admin/customers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newCustomerName,
+          email: newCustomerEmail,
+          phone: newCustomerPhone || undefined,
+          password: newCustomerPassword || undefined,
+          tenantId: tenantData.id
+        }),
+      });
+
+      const result = await response.json();
+      
+      console.log('Create customer response:', result);
+
+      if (result.success) {
+        // Add new customer to the local state
+        setCustomers([result.customer, ...customers]);
+        
+        alert(`✅ Customer "${newCustomerName}" created successfully!`);
+        
+        // Reset form and close dialog
+        setNewCustomerName('');
+        setNewCustomerEmail('');
+        setNewCustomerPhone('');
+        setNewCustomerPassword('');
+        setAddCustomerDialogOpen(false);
+      } else {
+        console.error('Failed to create customer:', result.error);
+        alert(`❌ Failed to create customer: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error creating customer:', error);
+      alert('❌ Failed to create customer. Please try again.');
+    } finally {
+      setCreatingCustomer(false);
     }
   };
 
@@ -273,11 +417,12 @@ export default function CustomersPage() {
     return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
   }).length;
 
-  if (loading) {
+  if (loading || !tenantData) {
     return (
       <div className="space-y-8">
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="ml-3 text-gray-600">Loading customers...</p>
         </div>
       </div>
     );
@@ -289,14 +434,26 @@ export default function CustomersPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Customers</h1>
-          <p className="text-gray-600 mt-2">Manage your customer database and contact information</p>
+          <p className="text-gray-600 mt-2">
+            Manage your customer database and contact information
+            <span className="ml-2 text-green-600 text-sm">● Live (Auto-refresh: 5s)</span>
+          </p>
         </div>
         <div className="flex items-center space-x-3">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={fetchCustomers}
+            title="Refresh customer list"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
           <Button variant="outline" onClick={exportToCSV}>
             <FileText className="w-4 h-4 mr-2" />
             Export CSV
           </Button>
-          <Button>
+          <Button onClick={() => setAddCustomerDialogOpen(true)}>
             <UserPlus className="w-4 h-4 mr-2" />
             Add Customer
           </Button>
@@ -550,6 +707,151 @@ export default function CustomersPage() {
                 <>
                   <Gift className="w-4 h-4 mr-2" />
                   Add Points
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Customer Dialog */}
+      <Dialog open={addCustomerDialogOpen} onOpenChange={setAddCustomerDialogOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader className="space-y-3">
+            <div className="flex items-center space-x-2">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+                <UserPlus className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl">Add New Customer</DialogTitle>
+                <DialogDescription className="text-sm">
+                  Create a new customer account with loyalty benefits
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          
+          <div className="space-y-5 py-4">
+            {/* Name Field */}
+            <div className="space-y-2">
+              <Label htmlFor="name" className="text-sm font-medium flex items-center">
+                Full Name <span className="text-red-500 ml-1">*</span>
+              </Label>
+              <Input
+                id="name"
+                placeholder="e.g., John Doe"
+                value={newCustomerName}
+                onChange={(e) => setNewCustomerName(e.target.value)}
+                className="h-11"
+                required
+              />
+            </div>
+
+            {/* Email Field */}
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-sm font-medium flex items-center">
+                Email Address <span className="text-red-500 ml-1">*</span>
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="e.g., john@example.com"
+                value={newCustomerEmail}
+                onChange={(e) => setNewCustomerEmail(e.target.value)}
+                className="h-11"
+                required
+              />
+            </div>
+
+            {/* Phone Field */}
+            <div className="space-y-2">
+              <Label htmlFor="phone" className="text-sm font-medium">
+                Phone Number <span className="text-gray-400 text-xs">(Optional)</span>
+              </Label>
+              <Input
+                id="phone"
+                type="tel"
+                placeholder="e.g., +44 7700 900000"
+                value={newCustomerPhone}
+                onChange={(e) => setNewCustomerPhone(e.target.value)}
+                className="h-11"
+              />
+            </div>
+
+            {/* Password Field */}
+            <div className="space-y-2">
+              <Label htmlFor="password" className="text-sm font-medium">
+                Password <span className="text-gray-400 text-xs">(Optional)</span>
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Leave blank for auto-generated password"
+                value={newCustomerPassword}
+                onChange={(e) => setNewCustomerPassword(e.target.value)}
+                className="h-11"
+              />
+              <p className="text-xs text-gray-500">
+                If left blank, a secure password will be generated automatically
+              </p>
+            </div>
+
+            {/* Info Box */}
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-xl p-4 space-y-2">
+              <div className="flex items-start space-x-2">
+                <div className="w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <span className="text-white text-xs font-bold">i</span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-blue-900">Initial Account Setup</p>
+                  <ul className="text-xs text-blue-700 space-y-1">
+                    <li className="flex items-center">
+                      <span className="mr-2">✓</span>
+                      <span>Loyalty Points: <strong>0</strong></span>
+                    </li>
+                    <li className="flex items-center">
+                      <span className="mr-2">✓</span>
+                      <span>Tier Level: <strong className="text-amber-600">Bronze</strong></span>
+                    </li>
+                    <li className="flex items-center">
+                      <span className="mr-2">✓</span>
+                      <span>Points can be added later using "Add Points" button</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setAddCustomerDialogOpen(false);
+                setNewCustomerName('');
+                setNewCustomerEmail('');
+                setNewCustomerPhone('');
+                setNewCustomerPassword('');
+              }}
+              disabled={creatingCustomer}
+              className="flex-1 sm:flex-initial h-11"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={createCustomer}
+              disabled={creatingCustomer || !newCustomerName || !newCustomerEmail}
+              className="flex-1 sm:flex-initial h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            >
+              {creatingCustomer ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Create Customer
                 </>
               )}
             </Button>

@@ -5,56 +5,69 @@ import db from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
-    // Get JWT token from cookie
     const token = request.cookies.get('customer_token')?.value;
     
     if (!token) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Not authenticated' 
+      }, { status: 401 });
     }
 
-    // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret') as any;
+    const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
-    const tenantId = decoded.tenantId;
 
-    const body = await request.json();
-    const { currentPassword, newPassword } = body;
+    const { currentPassword, newPassword } = await request.json();
 
     if (!currentPassword || !newPassword) {
-      return NextResponse.json({ error: 'Current password and new password are required' }, { status: 400 });
+      return NextResponse.json({
+        success: false,
+        message: 'Current and new password are required'
+      }, { status: 400 });
     }
 
-    if (newPassword.length < 8) {
-      return NextResponse.json({ error: 'New password must be at least 8 characters long' }, { status: 400 });
-    }
-
-    // Get current customer data
-    const customerQuery = 'SELECT password FROM customers WHERE id = ? AND tenant_id = ?';
-    const customers = await db.query(customerQuery, [customerId, tenantId]);
-    
-    if (!customers || (customers as any[]).length === 0) {
-      return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
-    }
+    // Get current password hash
+    const [customers] = await db.execute(
+      'SELECT password FROM customers WHERE id = ?',
+      [customerId]
+    );
 
     const customer = (customers as any[])[0];
+    if (!customer) {
+      return NextResponse.json({
+        success: false,
+        message: 'Customer not found'
+      }, { status: 404 });
+    }
 
     // Verify current password
-    const isValidPassword = await bcrypt.compare(currentPassword, customer.password);
-    if (!isValidPassword) {
-      return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
+    const isValid = await bcrypt.compare(currentPassword, customer.password);
+    if (!isValid) {
+      return NextResponse.json({
+        success: false,
+        message: 'Current password is incorrect'
+      }, { status: 400 });
     }
 
     // Hash new password
-    const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // Update password
-    const updateQuery = 'UPDATE customers SET password = ? WHERE id = ? AND tenant_id = ?';
-    await db.query(updateQuery, [hashedNewPassword, customerId, tenantId]);
+    await db.execute(
+      'UPDATE customers SET password = ?, updated_at = NOW() WHERE id = ?',
+      [hashedPassword, customerId]
+    );
 
-    return NextResponse.json({ success: true, message: 'Password changed successfully' });
+    return NextResponse.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
 
   } catch (error) {
-    console.error('Password change error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    console.error('Change password error:', error);
+    return NextResponse.json({
+      success: false,
+      message: 'Failed to change password'
+    }, { status: 500 });
   }
 }

@@ -69,6 +69,7 @@ import {
   Package,
   AlertTriangle,
   CreditCard,
+  Gift,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getCurrencySymbol } from '@/lib/currency-utils';
@@ -1036,7 +1037,7 @@ const OrderSummary = React.memo(function OrderSummary({
   stripePublishableKey: string;
 }) {
   const { toast } = useToast();
-  const { restaurantSettings, currentUser, createOrder } = useTenantData();
+  const { restaurantSettings, currentUser, createOrder, isAuthenticated } = useTenantData();
   const { tenantData } = useTenant();
   
   const totalItems = order.reduce((sum, item) => sum + item.quantity, 0);
@@ -1117,7 +1118,8 @@ const OrderSummary = React.memo(function OrderSummary({
   const [orderNote, setOrderNote] = React.useState(''); // Overall order note/special instructions
   
   // Loyalty Points Redemption State
-  const [customerAuth, setCustomerAuth] = React.useState<{authenticated: boolean, customer: any} | null>(null);
+  // Remove separate customerAuth state - use TenantDataContext's authentication state
+  // const [customerAuth, setCustomerAuth] = React.useState<{authenticated: boolean, customer: any} | null>(null);
   const [loyaltyData, setLoyaltyData] = React.useState<{pointsBalance: number} | null>(null);
   const [pointsToRedeem, setPointsToRedeem] = React.useState('');
   const [pointsDiscount, setPointsDiscount] = React.useState(0);
@@ -1158,17 +1160,37 @@ const OrderSummary = React.memo(function OrderSummary({
         }
         
         try {
-          const result = await TenantZoneService.calculateDeliveryFee(tenantData.id, postcode, subtotal);
-          if (result.error) {
-            setDeliveryError(result.error);
-            setDeliveryFee(0);
+          // Use API endpoint instead of direct server function call
+          const response = await fetch('/api/tenant/zones/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tenantId: tenantData.id,
+              postcode: postcode.trim(),
+              orderValue: subtotal
+            })
+          });
+
+          const result = await response.json();
+          
+          if (response.ok && result.success) {
+            if (result.data.error) {
+              setDeliveryError(result.data.error);
+              setDeliveryFee(0);
+            } else if (result.data.fee !== undefined) {
+              setDeliveryError('');
+              setDeliveryFee(result.data.fee);
+            } else {
+              setDeliveryError('');
+              setDeliveryFee(0);
+            }
           } else {
-            setDeliveryError('');
-            setDeliveryFee(result.fee);
+            setDeliveryError(result.error || 'Unable to validate delivery postcode');
+            setDeliveryFee(0);
           }
         } catch (error) {
           console.error('Error calculating delivery fee:', error);
-          setDeliveryError('Unable to calculate delivery fee');
+          setDeliveryError('Unable to calculate delivery fee. Please check your postcode.');
           setDeliveryFee(0);
         }
       } else {
@@ -1180,35 +1202,57 @@ const OrderSummary = React.memo(function OrderSummary({
     calculateDeliveryFee();
   }, [selectedOrderType, advanceFulfillmentType, postcode, subtotal, tenantData?.id]);
 
-  // Check customer authentication for loyalty points
+  // Check for loyalty data when authentication state changes in TenantDataContext
   React.useEffect(() => {
-    const checkCustomerAuth = async () => {
+    const fetchLoyaltyData = async () => {
+      if (!isAuthenticated || !currentUser) {
+        console.log('� [LOYALTY-DEBUG] Not authenticated - clearing loyalty data');
+        setLoyaltyData(null);
+        setShowPointsSection(false);
+        return;
+      }
+
+      console.log('✅ [LOYALTY-DEBUG] Customer authenticated:', currentUser.name, '- fetching loyalty data');
+      
       try {
-        const response = await fetch('/api/customer/check-auth', {
-          credentials: 'include'
+        const loyaltyResponse = await fetch('/api/customer/loyalty', {
+          credentials: 'include',
+          cache: 'no-cache',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate'
+          }
         });
-        const data = await response.json();
-        setCustomerAuth(data);
         
-        if (data.authenticated) {
-          // Fetch loyalty data
-          const loyaltyResponse = await fetch('/api/customer/loyalty', {
-            credentials: 'include'
-          });
+        console.log('🎯 [LOYALTY-DEBUG] Loyalty response status:', loyaltyResponse.status);
+        
+        if (loyaltyResponse.ok) {
           const loyaltyResult = await loyaltyResponse.json();
-          if (loyaltyResult.success) {
+          console.log('🎯 [LOYALTY-DEBUG] Loyalty response data:', JSON.stringify(loyaltyResult, null, 2));
+
+          if (loyaltyResult.success && loyaltyResult.loyalty) {
+            console.log('✅ [LOYALTY-DEBUG] Setting loyalty data with', loyaltyResult.loyalty.pointsBalance, 'points');
             setLoyaltyData(loyaltyResult.loyalty);
             setShowPointsSection(true);
+          } else {
+            console.log('❌ [LOYALTY-DEBUG] No valid loyalty data:', loyaltyResult.error || 'Unknown error');
+            setLoyaltyData(null);
+            setShowPointsSection(false);
           }
+        } else {
+          console.error('❌ [LOYALTY-DEBUG] Loyalty API error:', loyaltyResponse.status, loyaltyResponse.statusText);
+          setLoyaltyData(null);
+          setShowPointsSection(false);
         }
-      } catch (error) {
-        console.error('Error checking customer auth:', error);
-        setCustomerAuth({ authenticated: false, customer: null });
+      } catch (loyaltyError) {
+        console.error('❌ [LOYALTY-DEBUG] Loyalty fetch error:', loyaltyError);
+        setLoyaltyData(null);
+        setShowPointsSection(false);
       }
     };
-    
-    checkCustomerAuth();
-  }, []);
+
+    fetchLoyaltyData();
+  }, [isAuthenticated, currentUser]); // Trigger when TenantDataContext auth state changes
 
   // Generate time slots for advance orders with smart same-day logic
   React.useEffect(() => {
@@ -1352,7 +1396,7 @@ const OrderSummary = React.memo(function OrderSummary({
     }
 
     try {
-      const response = await fetch('/api/customer/redeem-points', {
+      const response = await fetch('/api/customer/loyalty/redeem', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1685,9 +1729,9 @@ const OrderSummary = React.memo(function OrderSummary({
       const orderResult = await createOrder(orderData);
       
       // Process loyalty points redemption if points were used
-      if (parseInt(pointsToRedeem) > 0 && customerAuth) {
+      if (parseInt(pointsToRedeem) > 0 && isAuthenticated && currentUser) {
         try {
-          const response = await fetch('/api/customer/redeem-points', {
+          const response = await fetch('/api/customer/loyalty/redeem', {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -1696,12 +1740,24 @@ const OrderSummary = React.memo(function OrderSummary({
             body: JSON.stringify({
               pointsToRedeem: parseInt(pointsToRedeem),
               orderId: orderResult.orderId,
-              orderTotal: finalTotal
+              orderNumber: orderResult.orderNumber,
+              discountAmount: pointsDiscount.toFixed(2)
             }),
           });
 
-          if (!response.ok) {
-            console.error('Failed to redeem points, but order was placed successfully');
+          const result = await response.json();
+          
+          if (!response.ok || !result.success) {
+            console.error('Failed to redeem points:', result.error);
+            // Order was placed successfully, but points redemption failed
+            // Show warning to user
+            toast({
+              title: 'Note',
+              description: 'Order placed but loyalty points were not deducted. Please contact support.',
+              variant: 'destructive',
+            });
+          } else {
+            console.log('✅ Loyalty points redeemed successfully:', result.data);
           }
         } catch (error) {
           console.error('Error redeeming points:', error);
@@ -2097,55 +2153,131 @@ const OrderSummary = React.memo(function OrderSummary({
           )}
         </div>
 
-        {/* Loyalty Points Redemption Section - Only for logged-in customers */}
-        {showPointsSection && customerAuth?.authenticated && loyaltyData && loyaltyData.pointsBalance > 0 && (
-          <div className="space-y-2 pt-4 border-t">
-            <Label className="flex items-center gap-2">
-              <span>Redeem Loyalty Points</span>
-              <span className="text-xs text-muted-foreground">
-                Available: {loyaltyData.pointsBalance || 0} points (£{((loyaltyData.pointsBalance || 0) * 0.01).toFixed(2)})
+        {/* DEBUG: Loyalty State Information (temporarily enabled for troubleshooting) */}
+        {false && (
+          <div className="pt-4 border-t border-gray-200">
+            <div className="p-3 bg-gray-100 border border-gray-300 rounded-lg text-xs">
+              <div className="font-semibold text-gray-800 mb-2">🐛 LOYALTY DEBUG INFO:</div>
+              <div>isAuthenticated: {isAuthenticated.toString()}</div>
+              <div>currentUser: {currentUser ? currentUser.name : 'null'}</div>
+              <div>loyaltyData: {JSON.stringify(loyaltyData)}</div>
+              <div>showPointsSection: {showPointsSection.toString()}</div>
+              <div>Condition check: isAuthenticated = {isAuthenticated.toString()}</div>
+              <div>Condition check: loyaltyData exists = {(!!loyaltyData).toString()}</div>
+              <div>Condition check: pointsBalance {'>'} 0 = {(loyaltyData && loyaltyData.pointsBalance > 0).toString()}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Loyalty Points Section for customers */}
+        
+        {/* Loyalty Points Redemption Section */}
+        {isAuthenticated && currentUser && loyaltyData && loyaltyData.pointsBalance > 0 && (
+          <div className="space-y-2 pt-4 border-t border-gray-200">
+            <Label className="flex items-center justify-between">
+              <span className="font-medium text-gray-900">Redeem Loyalty Points</span>
+              <span className="text-sm text-green-600 font-medium">
+                Available: {loyaltyData.pointsBalance} points (£{(loyaltyData.pointsBalance * 0.01).toFixed(2)})
               </span>
             </Label>
             {pointsDiscount > 0 ? (
-              <div className="flex items-center justify-between p-2 bg-blue-50 border border-blue-200 rounded">
+              <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
                 <div>
-                  <span className="text-sm font-medium text-blue-700">
+                  <span className="text-sm font-medium text-green-700">
                     {pointsToRedeem} points applied
                   </span>
-                  <div className="text-xs text-blue-600">
-                    Save £{pointsDiscount.toFixed(2)}
+                  <div className="text-xs text-green-600">
+                    You save £{pointsDiscount.toFixed(2)}
                   </div>
                 </div>
                 <Button 
                   variant="ghost" 
                   size="sm" 
                   onClick={handleRemovePoints}
-                  className="text-red-600 hover:text-white hover:bg-red-600 transition-all duration-200"
+                  className="text-red-600 hover:text-white hover:bg-red-600 h-8 w-8 p-0"
                 >
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             ) : (
-              <div className="flex gap-2">
-                <Input
-                  value={pointsToRedeem}
-                  onChange={(e) => setPointsToRedeem(e.target.value)}
-                  placeholder="Enter Point"
-                  type="number"
-                  min="100"
-                  max={loyaltyData.pointsBalance}
-                  className={pointsError ? 'border-destructive' : ''}
-                />
-                <Button onClick={handleApplyPoints} variant="outline">
-                  Apply
-                </Button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <Input
+                    value={pointsToRedeem}
+                    onChange={(e) => setPointsToRedeem(e.target.value)}
+                    placeholder="Enter points to redeem"
+                    type="number"
+                    min="100"
+                    max={loyaltyData.pointsBalance}
+                    step="100"
+                    className={pointsError ? 'border-red-300 focus:border-red-500' : 'border-gray-300'}
+                  />
+                  <Button 
+                    onClick={handleApplyPoints} 
+                    className="bg-green-600 hover:bg-green-700 text-white px-6"
+                    disabled={!pointsToRedeem || parseInt(pointsToRedeem) < 100}
+                  >
+                    Apply
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Minimum 100 points • 1 point = £0.01
+                </p>
               </div>
             )}
             {pointsError && (
-              <p className="text-sm text-destructive">{pointsError}</p>
+              <p className="text-sm text-red-600">{pointsError}</p>
             )}
           </div>
         )}
+
+        {/* Customer Authentication Status */}
+        {!isAuthenticated ? (
+          // Not logged in - show login prompt
+          <div className="pt-4 border-t border-gray-200">
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <Label className="flex items-center gap-2 text-blue-800 font-medium">
+                <Gift className="h-4 w-4" />
+                <span>Earn & Redeem Loyalty Points</span>
+              </Label>
+              <p className="text-xs text-blue-600 mt-1">
+                Login to use your loyalty points and save money on this order!
+              </p>
+              <LoginDialog>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2 text-blue-600 border-blue-300 hover:bg-blue-100"
+                >
+                  Login to Use Points
+                </Button>
+              </LoginDialog>
+            </div>
+          </div>
+        ) : isAuthenticated && currentUser && (!loyaltyData || loyaltyData.pointsBalance <= 0) ? (
+          // Logged in but no points
+          <div className="pt-4 border-t border-gray-200">
+            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <Label className="flex items-center gap-2 text-yellow-800 font-medium">
+                <User className="h-4 w-4" />
+                <span>Welcome {currentUser.name}!</span>
+              </Label>
+              <p className="text-xs text-yellow-700 mt-1">
+                {loyaltyData && loyaltyData.pointsBalance <= 0 
+                  ? "You don't have enough loyalty points to redeem (minimum 100 points required)."
+                  : "Start earning loyalty points with your orders!"}
+              </p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => window.location.href = `/${tenantData?.slug}/customer/dashboard`}
+                className="mt-2 text-yellow-700 border-yellow-300 hover:bg-yellow-100"
+              >
+                View Dashboard
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         {/* Gift Card Section */}
         {selectedPaymentMethod === 'gift_card' && (
@@ -2836,8 +2968,8 @@ const CustomerHeader = React.memo(function CustomerHeader({ router, tenantData }
                             <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3">
                                     <User className="h-4 w-4 sm:h-5 sm:w-5" />
-                                    <span className="hidden sm:inline">Hi, {currentUser.name.split(' ')[0]}</span>
-                                    <span className="sm:hidden">{currentUser.name.split(' ')[0]}</span>
+                                    <span className="hidden sm:inline">Hi, {currentUser.name?.split(' ')[0] || currentUser.email?.split('@')[0] || 'User'}</span>
+                                    <span className="sm:hidden">{currentUser.name?.split(' ')[0] || currentUser.email?.split('@')[0] || 'User'}</span>
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-48">

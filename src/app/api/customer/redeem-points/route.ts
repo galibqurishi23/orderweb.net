@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     // Verify JWT token
     let decoded: any;
     try {
-      decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
+      decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     } catch (jwtError) {
       return NextResponse.json({ error: 'Invalid authentication token' }, { status: 401 });
     }
@@ -142,7 +142,7 @@ export async function PUT(request: NextRequest) {
     // Verify JWT token
     let decoded: any;
     try {
-      decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
+      decoded = jwt.verify(token, process.env.JWT_SECRET || process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     } catch (jwtError) {
       return NextResponse.json({ error: 'Invalid authentication token' }, { status: 401 });
     }

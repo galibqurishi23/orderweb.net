@@ -20,7 +20,11 @@ export async function POST(request: NextRequest) {
 
     const result = await CustomerAuthService.login(email, password, tenantId, ipAddress);
 
+    console.log('[LOGIN] Login result:', { success: result.success, hasToken: !!result.token });
+
     if (result.success && result.token) {
+      console.log('[LOGIN] Setting customer_token cookie');
+      
       const response = NextResponse.json({
         success: true,
         message: 'Login successful',
@@ -36,6 +40,7 @@ export async function POST(request: NextRequest) {
         path: '/'
       });
 
+      console.log('[LOGIN] ✅ Cookie set successfully');
       return response;
     } else {
       return NextResponse.json({

@@ -1,32 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
 import jwt from 'jsonwebtoken';
+import db from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
-    // Get JWT token from cookie
     const token = request.cookies.get('customer_token')?.value;
     
     if (!token) {
-      console.log('❌ No customer token found in cookies');
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    console.log('🔍 Found token, verifying...', token.substring(0, 20) + '...');
-
-    // Verify JWT token
-    let decoded: any;
-    try {
-      decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
-    } catch (jwtError) {
-      console.log('❌ JWT verification failed:', jwtError);
-      return NextResponse.json({ error: 'Invalid authentication token' }, { status: 401 });
-    }
-    
+    const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || 'customer-secret-key') as any;
     const customerId = decoded.customerId;
     const tenantId = decoded.tenantId;
-
-    console.log('✅ Authenticated customer:', customerId, 'tenant:', tenantId);
 
     const { searchParams } = new URL(request.url);
     const limit = searchParams.get('limit') || '20';
@@ -60,7 +46,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get orders
-    const params = [customerId, tenantId];
+    const params: any[] = [customerId, tenantId];
     if (status !== 'all') {
       params.push(status);
     }
