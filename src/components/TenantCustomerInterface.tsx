@@ -2574,6 +2574,42 @@ const OrderSummary = React.memo(function OrderSummary({
                 </div>
 
               </div>
+
+              {/* Order Summary Breakdown */}
+              <div className="border-t pt-4 space-y-3">
+                <div className="flex justify-between text-base">
+                  <span className="text-gray-700">Subtotal:</span>
+                  <span className="font-medium">{currencySymbol}{subtotal.toFixed(2)}</span>
+                </div>
+                
+                {((selectedOrderType === 'delivery' || (selectedOrderType === 'advance' && advanceFulfillmentType === 'delivery')) && deliveryFee > 0) && (
+                  <div className="flex justify-between text-base">
+                    <span className="text-gray-700">Delivery Fee:</span>
+                    <span className="font-medium">{currencySymbol}{deliveryFee.toFixed(2)}</span>
+                  </div>
+                )}
+
+                {voucherDiscount > 0 && (
+                  <div className="flex justify-between text-base text-green-600">
+                    <span>Voucher Discount:</span>
+                    <span>-{currencySymbol}{voucherDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+
+                {pointsDiscount > 0 && (
+                  <div className="flex justify-between text-base text-green-600">
+                    <span>Points Discount:</span>
+                    <span>-{currencySymbol}{pointsDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+
+                <Separator />
+                
+                <div className="flex justify-between text-lg font-bold">
+                  <span>Total:</span>
+                  <span>{currencySymbol}{finalTotal.toFixed(2)}</span>
+                </div>
+              </div>
               
               {/* Submit button - different text based on payment method */}
               <DialogFooter>
