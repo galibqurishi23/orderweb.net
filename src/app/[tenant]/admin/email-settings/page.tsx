@@ -23,7 +23,7 @@ interface SMTPSettings {
 
 export default function EmailSettingsPage() {
   const params = useParams();
-  const tenant = params.tenant as string;
+  const tenant = params?.tenant as string;
   
   const [settings, setSettings] = useState<SMTPSettings>({
     smtp_host: '',

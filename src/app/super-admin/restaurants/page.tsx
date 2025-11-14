@@ -925,29 +925,68 @@ export default function RestaurantsPage() {
                       <Calendar className="h-4 w-4 text-gray-400" />
                       <span>Created {new Date(restaurant.created_at).toLocaleDateString()}</span>
                     </div>
-                    
-                    {/* License Information */}
-                    {restaurant.key_code && (
-                      <div className="flex items-center space-x-3 text-sm text-gray-600">
-                        <Key className="h-4 w-4 text-green-500" />
-                        <span className="font-medium">License: {restaurant.key_code}</span>
+                  </div>
+
+                  {/* License Information - Prominent Display */}
+                  {restaurant.license_expires_at && (
+                    <div className="mt-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <Key className="h-4 w-4 text-blue-600" />
+                          <span className="text-sm font-semibold text-gray-700">License Status</span>
+                        </div>
+                        <Badge 
+                          className={`${
+                            (restaurant.licenseDaysRemaining ?? 0) <= 0 ? 'bg-red-100 text-red-800 border-red-300' :
+                            (restaurant.licenseDaysRemaining ?? 0) <= 7 ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                            (restaurant.licenseDaysRemaining ?? 0) <= 30 ? 'bg-yellow-100 text-yellow-800 border-yellow-300' : 
+                            'bg-green-100 text-green-800 border-green-300'
+                          } font-semibold`}
+                        >
+                          {(restaurant.licenseDaysRemaining ?? 0) <= 0 ? '🔴 Expired' :
+                           (restaurant.licenseDaysRemaining ?? 0) <= 7 ? '🟠 Expiring Soon' :
+                           '🟢 Active'}
+                        </Badge>
                       </div>
-                    )}
-                    
-                    {restaurant.license_expires_at && (
-                      <div className="flex items-center space-x-3 text-sm">
-                        <Calendar className="h-4 w-4 text-blue-500" />
-                        <span className={`font-medium ${
-                          (restaurant.licenseDaysRemaining ?? 0) <= 7 ? 'text-red-600' :
-                          (restaurant.licenseDaysRemaining ?? 0) <= 30 ? 'text-orange-600' : 'text-green-600'
-                        }`}>
-                          Expires: {new Date(restaurant.license_expires_at).toLocaleDateString()}
+                      <div className="mt-2 space-y-1">
+                        {restaurant.license_key && (
+                          <div className="text-xs text-gray-600">
+                            <span className="font-medium">Key:</span> {restaurant.license_key}
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-600">
+                            <span className="font-medium">Expires:</span> {new Date(restaurant.license_expires_at).toLocaleDateString()}
+                          </span>
                           {restaurant.licenseDaysRemaining !== undefined && restaurant.licenseDaysRemaining > 0 && (
-                            <span className="ml-1">({restaurant.licenseDaysRemaining} days left)</span>
+                            <span className={`font-bold ${
+                              restaurant.licenseDaysRemaining <= 7 ? 'text-red-600' :
+                              restaurant.licenseDaysRemaining <= 30 ? 'text-orange-600' : 'text-green-600'
+                            }`}>
+                              {restaurant.licenseDaysRemaining} days left
+                            </span>
                           )}
-                        </span>
+                          {restaurant.licenseDaysRemaining !== undefined && restaurant.licenseDaysRemaining <= 0 && (
+                            <span className="font-bold text-red-600">
+                              License Expired!
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    )}
+                    </div>
+                  )}
+                  
+                  {!restaurant.license_expires_at && (
+                    <div className="mt-3 p-3 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border border-gray-300">
+                      <div className="flex items-center space-x-2">
+                        <AlertTriangle className="h-4 w-4 text-gray-500" />
+                        <span className="text-sm font-semibold text-gray-600">No License Assigned</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">Click the key icon below to assign a license</p>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-2">
                     
                     {restaurant.isTrialActive && (
                       <div className="flex items-center space-x-3 text-sm">

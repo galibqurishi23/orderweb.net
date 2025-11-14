@@ -35,36 +35,70 @@ export async function getTenantDeliveryZones(tenantId: string): Promise<Delivery
 }
 
 export async function validateDeliveryPostcode(tenantId: string, postcode: string): Promise<{ valid: boolean; zone?: DeliveryZone; error?: string }> {
+    console.log('🔍 validateDeliveryPostcode called:', { tenantId, postcode });
+    
     const zones = await getTenantDeliveryZones(tenantId);
+    console.log('📦 Zones fetched:', zones.length, 'zones');
     
     if (zones.length === 0) {
         // If no zones are configured, assume delivery is available everywhere
+        console.log('ℹ️ No zones configured, allowing delivery');
         return { valid: true };
     }
     
     // Normalize postcode (remove spaces, convert to uppercase)
     const normalizedPostcode = postcode.replace(/\s/g, '').toUpperCase();
+    console.log('📝 Normalized postcode:', normalizedPostcode);
+    
+    // Extract outward code (e.g., "SE4" from "SE4 2JP")
+    const postcodeOutward = normalizedPostcode.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/)?.[1] || normalizedPostcode;
+    console.log('📍 Extracted outward code:', postcodeOutward);
     
     for (const zone of zones) {
+        console.log('🔍 Checking zone:', zone.name, 'with postcodes:', zone.postcodes);
         if (zone.postcodes && zone.postcodes.length > 0) {
             // Check if postcode matches any in this zone
             const matches = zone.postcodes.some((zonePostcode: string) => {
                 const normalizedZonePostcode = zonePostcode.replace(/\s/g, '').toUpperCase();
+                const zoneOutward = normalizedZonePostcode.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/)?.[1] || normalizedZonePostcode;
                 
-                // Exact match
+                console.log('  🔸 Comparing:', {
+                    customer: normalizedPostcode,
+                    customerOutward: postcodeOutward,
+                    zone: normalizedZonePostcode,
+                    zoneOutward: zoneOutward
+                });
+                
+                // Exact match (full postcode)
                 if (normalizedZonePostcode === normalizedPostcode) {
+                    console.log('  ✅ EXACT MATCH!');
                     return true;
                 }
                 
-                // Partial match (e.g., "SW1" matches "SW1A 1AA")
+                // Outward code match (e.g., "SE4" matches "SE4 2JP", "SE4 2PJ", etc.)
+                if (zoneOutward === postcodeOutward) {
+                    console.log('  ✅ OUTWARD CODE MATCH!');
+                    return true;
+                }
+                
+                // Prefix match (e.g., "SW1" matches "SW1A 1AA")
                 if (normalizedPostcode.startsWith(normalizedZonePostcode)) {
+                    console.log('  ✅ PREFIX MATCH (customer starts with zone)!');
                     return true;
                 }
                 
+                // Zone is a prefix of customer postcode (e.g., zone "SE4" matches customer "SE42JP")
+                if (normalizedPostcode.startsWith(zoneOutward)) {
+                    console.log('  ✅ ZONE OUTWARD PREFIX MATCH!');
+                    return true;
+                }
+                
+                console.log('  ❌ No match');
                 return false;
             });
             
             if (matches) {
+                console.log('✅ Zone matched:', zone.name);
                 return { valid: true, zone };
             }
         }
@@ -74,29 +108,41 @@ export async function validateDeliveryPostcode(tenantId: string, postcode: strin
 }
 
 export async function calculateDeliveryFee(tenantId: string, postcode: string, orderValue: number): Promise<{ fee: number; zone?: DeliveryZone; error?: string }> {
-    const validation = await validateDeliveryPostcode(tenantId, postcode);
+    console.log('🔍 calculateDeliveryFee called:', { tenantId, postcode, orderValue });
     
-    if (!validation.valid) {
-        return { fee: 0, error: validation.error };
-    }
-    
-    if (!validation.zone) {
-        // No specific zone, use default delivery fee
-        return { fee: 2.50 }; // Default delivery fee
-    }
-    
-    // Check minimum order value
-    if (orderValue < validation.zone.minOrder) {
+    try {
+        const validation = await validateDeliveryPostcode(tenantId, postcode);
+        console.log('✅ Validation result:', validation);
+        
+        if (!validation.valid) {
+            console.log('❌ Validation failed:', validation.error);
+            return { fee: 0, error: validation.error };
+        }
+        
+        if (!validation.zone) {
+            // No specific zone, use default delivery fee
+            console.log('ℹ️ No specific zone found, using default fee');
+            return { fee: 2.50 }; // Default delivery fee
+        }
+        
+        // Check minimum order value
+        if (orderValue < validation.zone.minOrder) {
+            console.log('❌ Order value too low:', orderValue, '<', validation.zone.minOrder);
+            return { 
+                fee: 0, 
+                error: `Minimum order value for this area is £${validation.zone.minOrder.toFixed(2)}` 
+            };
+        }
+        
+        console.log('✅ Delivery fee calculated:', validation.zone.deliveryFee);
         return { 
-            fee: 0, 
-            error: `Minimum order value for this area is £${validation.zone.minOrder.toFixed(2)}` 
+            fee: validation.zone.deliveryFee, 
+            zone: validation.zone 
         };
+    } catch (error) {
+        console.error('💥 Error in calculateDeliveryFee:', error);
+        throw error;
     }
-    
-    return { 
-        fee: validation.zone.deliveryFee, 
-        zone: validation.zone 
-    };
 }
 
 export async function getDeliveryTime(tenantId: string, postcode: string): Promise<number> {

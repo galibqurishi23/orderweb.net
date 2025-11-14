@@ -21,8 +21,18 @@ import {
 import Link from 'next/link';
 import type { PlatformStats } from '@/lib/types';
 
+interface LicenseStats {
+  totalLicenses: number;
+  activeLicenses: number;
+  expiredLicenses: number;
+  expiringSoon: number;
+  gracePeriodLicenses: number;
+  suspendedLicenses: number;
+}
+
 export default function SuperAdminDashboard() {
   const [stats, setStats] = useState<PlatformStats | null>(null);
+  const [licenseStats, setLicenseStats] = useState<LicenseStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -56,17 +66,87 @@ export default function SuperAdminDashboard() {
     if (isAuthenticated) {
       async function fetchStats() {
         try {
-          const response = await fetch('/api/super-admin/stats');
-          const result = await response.json();
-          
-          if (result.success) {
-            setStats(result.data);
+          // Fetch platform stats and attempt the dedicated license stats endpoint
+          const platformPromise = fetch('/api/super-admin/stats');
+          const licenseStatsPromise = fetch('/api/super-admin/licenses/stats');
+
+          const [platformResponse, licenseResponse] = await Promise.all([platformPromise, licenseStatsPromise]);
+
+          // Platform stats
+          if (platformResponse.ok) {
+            const platformResult = await platformResponse.json();
+            if (platformResult.success) {
+              setStats(platformResult.data);
+            } else {
+              setError(platformResult.error || 'Failed to fetch platform statistics');
+            }
           } else {
-            setError(result.error || 'Failed to fetch statistics');
+            // Try to parse fallback body if present
+            try {
+              const platformResult = await platformResponse.json();
+              if (platformResult.success) {
+                setStats(platformResult.data);
+              } else {
+                setError(platformResult.error || 'Failed to fetch platform statistics');
+              }
+            } catch (e) {
+              setError('Failed to fetch platform statistics');
+            }
+          }
+
+          // License stats: if the dedicated endpoint isn't available (production build not restarted),
+          // fall back to fetching the full license list and computing counts client-side.
+          if (licenseResponse.ok) {
+            try {
+              const licenseResult = await licenseResponse.json();
+              if (licenseResult.success) {
+                setLicenseStats(licenseResult.data);
+              } else {
+                console.warn('Failed to fetch license statistics:', licenseResult.error);
+              }
+            } catch (e) {
+              console.warn('Failed to parse license stats response, falling back to list fetch');
+            }
+          } else {
+            // Fallback: fetch list of licenses and compute stats locally
+            try {
+              const listRes = await fetch('/api/super-admin/licenses');
+              if (listRes.ok) {
+                const licenses = await listRes.json();
+                // compute stats
+                const now = new Date();
+                const in30 = new Date();
+                in30.setDate(now.getDate() + 30);
+
+                const totalLicenses = Array.isArray(licenses) ? licenses.length : 0;
+                const activeLicenses = (licenses || []).filter((l: any) => l.status === 'active').length;
+                const expiredLicenses = (licenses || []).filter((l: any) => l.status === 'expired').length;
+                const gracePeriodLicenses = (licenses || []).filter((l: any) => l.status === 'grace_period').length;
+                const suspendedLicenses = (licenses || []).filter((l: any) => l.status === 'suspended').length;
+                const expiringSoon = (licenses || []).filter((l: any) => {
+                  if (!l.expiration_date) return false;
+                  const exp = new Date(l.expiration_date);
+                  return l.status === 'active' && exp >= now && exp <= in30;
+                }).length;
+
+                setLicenseStats({
+                  totalLicenses,
+                  activeLicenses,
+                  expiredLicenses,
+                  expiringSoon,
+                  gracePeriodLicenses,
+                  suspendedLicenses
+                });
+              } else {
+                console.warn('/api/super-admin/licenses list endpoint failed when computing fallback stats');
+              }
+            } catch (err) {
+              console.warn('Fallback license stats computation failed:', err);
+            }
           }
         } catch (err) {
           setError('Failed to connect to server');
-          console.error('Error fetching platform stats:', err);
+          console.error('Error fetching stats:', err);
         } finally {
           setLoading(false);
         }
@@ -240,7 +320,13 @@ export default function SuperAdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-green-800">Active Licenses</p>
-                  <p className="text-2xl font-bold text-green-600" id="active-licenses">0</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {loading ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : (
+                      licenseStats?.activeLicenses || 0
+                    )}
+                  </p>
                 </div>
                 <CheckCircle className="w-8 h-8 text-green-500" />
               </div>
@@ -249,7 +335,13 @@ export default function SuperAdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-yellow-800">Expiring Soon</p>
-                  <p className="text-2xl font-bold text-yellow-600" id="expiring-licenses">0</p>
+                  <p className="text-2xl font-bold text-yellow-600">
+                    {loading ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : (
+                      licenseStats?.expiringSoon || 0
+                    )}
+                  </p>
                 </div>
                 <Clock className="w-8 h-8 text-yellow-500" />
               </div>
@@ -258,7 +350,13 @@ export default function SuperAdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-red-800">Expired</p>
-                  <p className="text-2xl font-bold text-red-600" id="expired-licenses">0</p>
+                  <p className="text-2xl font-bold text-red-600">
+                    {loading ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : (
+                      licenseStats?.expiredLicenses || 0
+                    )}
+                  </p>
                 </div>
                 <XCircle className="w-8 h-8 text-red-500" />
               </div>
@@ -267,12 +365,45 @@ export default function SuperAdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-blue-800">Total Licenses</p>
-                  <p className="text-2xl font-bold text-blue-600" id="total-licenses">0</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {loading ? (
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                    ) : (
+                      licenseStats?.totalLicenses || 0
+                    )}
+                  </p>
                 </div>
                 <Key className="w-8 h-8 text-blue-500" />
               </div>
             </div>
           </div>
+          {/* Show additional stats if available */}
+          {!loading && licenseStats && (licenseStats.gracePeriodLicenses > 0 || licenseStats.suspendedLicenses > 0) && (
+            <div className="grid gap-4 md:grid-cols-2 mb-6">
+              {licenseStats.gracePeriodLicenses > 0 && (
+                <div className="bg-orange-50 p-3 rounded-lg border border-orange-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-orange-800">Grace Period</p>
+                      <p className="text-xl font-bold text-orange-600">{licenseStats.gracePeriodLicenses}</p>
+                    </div>
+                    <AlertCircle className="w-6 h-6 text-orange-500" />
+                  </div>
+                </div>
+              )}
+              {licenseStats.suspendedLicenses > 0 && (
+                <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Suspended</p>
+                      <p className="text-xl font-bold text-gray-600">{licenseStats.suspendedLicenses}</p>
+                    </div>
+                    <XCircle className="w-6 h-6 text-gray-500" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex gap-2">
             <Link href="/super-admin/license-management">
               <Button variant="outline">
@@ -280,10 +411,12 @@ export default function SuperAdminDashboard() {
                 Manage Licenses
               </Button>
             </Link>
-            <Button variant="outline">
-              <Plus className="w-4 h-4 mr-2" />
-              Create License
-            </Button>
+            <Link href="/super-admin/license-management">
+              <Button variant="outline">
+                <Plus className="w-4 h-4 mr-2" />
+                Create License
+              </Button>
+            </Link>
           </div>
         </CardContent>
       </Card>

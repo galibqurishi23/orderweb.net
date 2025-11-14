@@ -33,9 +33,25 @@ export async function POST(
 ) {
   try {
     const tenant = params.tenant;
-    const phone = params.phone;
+    const rawPhone = params.phone;
     const apiKey = request.headers.get('x-api-key');
     const tenantHeader = request.headers.get('x-tenant-id');
+
+    // Normalize phone number - handle both UK formats
+    let normalizedPhone = rawPhone.trim();
+    if (normalizedPhone.startsWith('+44')) {
+      normalizedPhone = '0' + normalizedPhone.substring(3);
+    }
+    
+    const phoneWithPrefix = normalizedPhone.startsWith('0') 
+      ? '+44' + normalizedPhone.substring(1) 
+      : '+44' + normalizedPhone;
+    
+    console.log('📞 Redeem points - Phone normalization:', { 
+      original: rawPhone, 
+      normalized: normalizedPhone, 
+      withPrefix: phoneWithPrefix 
+    });
 
     // Validate headers
     if (!apiKey) {
@@ -72,29 +88,46 @@ export async function POST(
       }, { status: 400 });
     }
 
-    // Connect to tenant database
+    // Connect to main database
     const connection = await mysql.createConnection({
       host: process.env.DB_HOST || 'localhost',
       user: process.env.DB_USER || 'root',
       password: process.env.DB_PASSWORD || '',
-      database: `dinedesk_${tenant}`
+      database: 'dinedesk_db'
     });
 
     // Start transaction
     await connection.beginTransaction();
 
     try {
-      // Fetch customer with lock
+      // Get tenant ID
+      const [tenantRows] = await connection.execute(
+        'SELECT id FROM tenants WHERE slug = ?',
+        [tenant]
+      );
+      
+      if (!Array.isArray(tenantRows) || tenantRows.length === 0) {
+        await connection.rollback();
+        await connection.end();
+        return NextResponse.json({
+          success: false,
+          error: 'Tenant not found'
+        }, { status: 404 });
+      }
+      
+      const tenantId = (tenantRows[0] as any).id;
+
+      // Fetch customer with lock - search both phone formats
       const [customers] = await connection.execute(`
         SELECT 
           id,
           name,
-          phone,
-          loyaltyPoints
+          phone
         FROM customers
-        WHERE phone = ?
+        WHERE (phone = ? OR phone = ?)
+        AND tenant_id = ?
         FOR UPDATE
-      `, [phone]);
+      `, [normalizedPhone, phoneWithPrefix, tenantId]);
 
       const customerArray = customers as any[];
       
@@ -108,7 +141,27 @@ export async function POST(
       }
 
       const customer = customerArray[0];
-      const currentPoints = parseInt(customer.loyaltyPoints) || 0;
+
+      // Get customer loyalty points
+      const [loyaltyRows] = await connection.execute(`
+        SELECT points_balance, total_points_earned, total_points_redeemed
+        FROM customer_loyalty_points
+        WHERE customer_id = ? AND tenant_id = ?
+        FOR UPDATE
+      `, [customer.id, tenantId]);
+
+      if (!Array.isArray(loyaltyRows) || loyaltyRows.length === 0) {
+        await connection.rollback();
+        await connection.end();
+        return NextResponse.json({
+          success: false,
+          error: 'Customer has no loyalty account'
+        }, { status: 404 });
+      }
+
+      const loyalty = (loyaltyRows as any[])[0];
+      const currentPoints = parseInt(loyalty.points_balance) || 0;
+      const totalRedeemed = parseInt(loyalty.total_points_redeemed) || 0;
 
       // Check if enough points
       if (currentPoints < points) {
@@ -123,24 +176,35 @@ export async function POST(
       }
 
       const newPoints = currentPoints - points;
+      const newTotalRedeemed = totalRedeemed + points;
+
+      // Calculate discount amount (if not provided)
+      let calculatedDiscount = discountAmount;
+      if (!calculatedDiscount) {
+        // Get redemption rate from settings
+        const [settingsRows] = await connection.execute(
+          'SELECT redemption_rate FROM loyalty_settings WHERE tenant_id = ? LIMIT 1',
+          [tenantId]
+        );
+        const redemptionRate = (settingsRows as any[])[0]?.redemption_rate || 0.01;
+        calculatedDiscount = points * redemptionRate;
+      }
 
       // Update customer loyalty points
       await connection.execute(`
-        UPDATE customers
-        SET loyaltyPoints = ?,
-            updatedAt = NOW()
-        WHERE id = ?
-      `, [newPoints, customer.id]);
+        UPDATE customer_loyalty_points
+        SET points_balance = ?,
+            total_points_redeemed = ?,
+            updated_at = NOW()
+        WHERE customer_id = ? AND tenant_id = ?
+      `, [newPoints, newTotalRedeemed, customer.id, tenantId]);
 
-      // Log transaction in pos_loyalty_transactions table
+      // Log transaction in loyalty_transactions table
       await connection.execute(`
-        INSERT INTO pos_loyalty_transactions 
-        (tenant_id, customer_phone, customer_name, transaction_type, points_earned, points_redeemed, order_id, order_amount, reason, created_at)
-        VALUES (
-          (SELECT id FROM tenants WHERE slug = ? LIMIT 1),
-          ?, ?, 'redeemed', 0, ?, ?, ?, ?, NOW()
-        )
-      `, [tenant, phone, customer.name, points, orderId || null, discountAmount || null, reason || 'POS redemption']);
+        INSERT INTO loyalty_transactions 
+        (customer_id, tenant_id, transaction_type, points_amount, order_id, order_total, description, created_at)
+        VALUES (?, ?, 'redeemed', ?, ?, ?, ?, NOW())
+      `, [customer.id, tenantId, -points, orderId || null, calculatedDiscount, reason || 'POS redemption']);
 
       // Commit transaction
       await connection.commit();
@@ -150,13 +214,17 @@ export async function POST(
       try {
         await broadcastLoyaltyUpdate(tenant, {
           customerId: customer.id,
-          customerPhone: phone,
+          customerPhone: customer.phone,
+          customerName: customer.name,
           pointsChange: -points, // Negative for redemption
           newBalance: newPoints,
-          transactionType: 'redeem',
-          reason: reason || 'POS redemption'
+          totalPointsRedeemed: newTotalRedeemed,
+          transactionType: 'redeemed',
+          reason: reason || 'POS redemption',
+          discountAmount: calculatedDiscount,
+          orderId: orderId || null
         });
-        console.log('✅ WebSocket broadcast sent for loyalty points redemption:', phone);
+        console.log('✅ WebSocket broadcast sent for loyalty points redemption:', customer.phone);
       } catch (wsError) {
         console.error('⚠️ Error broadcasting loyalty redemption via WebSocket:', wsError);
       }
@@ -164,12 +232,12 @@ export async function POST(
       return NextResponse.json({
         success: true,
         data: {
-          phone: phone,
+          phone: customer.phone,
           customerName: customer.name,
           pointsRedeemed: points,
+          discountAmount: calculatedDiscount,
           previousPoints: currentPoints,
           newPoints: newPoints,
-          discountApplied: discountAmount || 0,
           timestamp: new Date().toISOString()
         }
       });

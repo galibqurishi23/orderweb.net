@@ -357,7 +357,10 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
     // Insert order items with VAT information
     if (enrichedOrder.items && enrichedOrder.items.length > 0) {
         const itemValues = enrichedOrder.items.map((item: any) => [
-            tenantId, orderId, item.menuItem.id, item.quantity,
+            tenantId, orderId, item.menuItem.id, 
+            item.menuItem.name || '', // Add name
+            item.menuItem.price || 0, // Add price
+            item.quantity,
             JSON.stringify(item.selectedAddons || []), item.specialInstructions || null,
             // VAT information
             JSON.stringify(item.vatInfo || {}),
@@ -365,12 +368,12 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
             item.vatInfo?.totalVAT || 0
         ]);
         
-        const placeholders = itemValues.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+        const placeholders = itemValues.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
         const flatValues = itemValues.flat();
         
         await pool.execute(
             `INSERT INTO order_items (
-                tenant_id, orderId, menuItemId, quantity, selectedAddons, specialInstructions,
+                tenant_id, orderId, menuItemId, name, price, quantity, selectedAddons, specialInstructions,
                 vat_info, is_mixed_item, total_vat_amount
             ) VALUES ${placeholders}`,
             flatValues
@@ -479,9 +482,11 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
                 createdAt: createdAt.toISOString()
             };
             
-            // Broadcast to all connected POS systems for this tenant
-            await broadcastNewOrder(tenantSlug, orderForBroadcast);
-            console.log('✅ WebSocket broadcast sent for order:', orderNumber);
+            // Broadcast to all connected POS systems for this tenant (fire-and-forget)
+            broadcastNewOrder(tenantSlug, orderForBroadcast).catch(err => {
+                console.error('⚠️ WebSocket broadcast failed (non-critical):', err);
+            });
+            console.log('✅ WebSocket broadcast initiated for order:', orderNumber);
         }
     } catch (wsError) {
         // Don't fail the order if WebSocket broadcast fails

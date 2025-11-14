@@ -266,28 +266,73 @@ export const TenantDataProvider = ({ children }: { children: ReactNode }) => {
     const createOrder = async (orderData: Omit<Order, 'id' | 'createdAt' | 'status' | 'orderNumber'>) => {
         if (!tenantData?.id) throw new Error('No tenant selected');
         
-        const response = await fetch(`/api/tenant/orders/create?tenantId=${tenantData.id}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(orderData)
-        });
+        console.log('🌐 TenantDataContext createOrder - Starting fetch request');
         
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            console.error('Order creation failed:', {
+        // Use absolute URL to prevent Next.js Server Actions interception
+        const url = `${window.location.origin}/api/tenant/orders/create?tenantId=${tenantData.id}`;
+        
+        console.log('📍 Full URL:', url);
+        console.log('📍 Tenant ID:', tenantData.id);
+        console.log('📦 Order data:', orderData);
+        
+        try {
+            console.log('🚀 About to call fetch()...');
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(orderData),
+                credentials: 'same-origin',
+                cache: 'no-store'
+            }).catch((fetchError) => {
+                console.error('❌ FETCH ITSELF FAILED:', fetchError);
+                console.error('❌ Fetch error type:', fetchError?.constructor?.name);
+                console.error('❌ Fetch error message:', fetchError?.message);
+                throw fetchError;
+            });
+            
+            console.log('✅ Fetch completed, response object:', response);
+            console.log('✅ Response details:', {
+                ok: response.ok,
                 status: response.status,
                 statusText: response.statusText,
-                error: errorData.error || 'Unknown error',
-                details: errorData.details || 'No details available'
+                type: response.type,
+                url: response.url
             });
-            throw new Error(errorData.error || `Failed to create order (${response.status})`);
+            
+            if (!response.ok) {
+                console.error('❌ Response not OK, status:', response.status);
+                const errorData = await response.json().catch(() => ({}));
+                console.error('❌ Order creation failed:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    error: errorData.error || 'Unknown error',
+                    details: errorData.details || 'No details available'
+                });
+                throw new Error(errorData.error || `Failed to create order (${response.status})`);
+            }
+            
+            console.log('🔄 Parsing JSON response...');
+            const result = await response.json();
+            console.log('✅ Order created successfully! Result:', result);
+            
+            console.log('🔄 Refreshing data...');
+            await refreshData();
+            console.log('✅ Data refreshed');
+            
+            // Return order details for redirect
+            console.log('✅ Returning result.data:', result.data);
+            return result.data;
+        } catch (error) {
+            console.error('❌❌❌ CRITICAL ERROR in createOrder ❌❌❌');
+            console.error('❌ Error object:', error);
+            console.error('❌ Error type:', error instanceof Error ? error.constructor.name : typeof error);
+            console.error('❌ Error message:', error instanceof Error ? error.message : String(error));
+            console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack');
+            console.error('❌ Full error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+            throw error;
         }
-        
-        const result = await response.json();
-        await refreshData();
-        
-        // Return order details for redirect
-        return result.data;
     };
 
     const saveMenuItem = async (item: MenuItem) => {

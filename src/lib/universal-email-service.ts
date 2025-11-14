@@ -18,18 +18,47 @@ class UniversalEmailService {
   private async initializeTransporter() {
     try {
       // Use environment variables for email configuration
+      // Check if SMTP is configured
+      if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
+        console.warn('⚠️ SMTP not configured - email sending will be disabled');
+        this.transporter = null;
+        return;
+      }
+
+      console.log('🔧 Initializing email transporter with:', {
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT,
+        secure: process.env.SMTP_SECURE === 'true',
+        user: process.env.SMTP_USER,
+        from: process.env.SMTP_FROM
+      });
+
       this.transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || 'localhost',
+        host: process.env.SMTP_HOST,
         port: parseInt(process.env.SMTP_PORT || '587'),
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
           user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
+          pass: process.env.SMTP_PASSWORD, // Fixed: was SMTP_PASS, now SMTP_PASSWORD
+        },
+        // Add proper email headers to improve deliverability
+        name: 'orderweb.co.uk', // Sets proper hostname in email headers
+        tls: {
+          rejectUnauthorized: false, // Accept self-signed certificates
         },
       });
+
+      console.log('✅ Email transporter initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize email transporter:', error);
+      console.error('❌ Failed to initialize email transporter:', error);
+      this.transporter = null;
     }
+  }
+
+  // Method to reinitialize transporter (useful after SMTP settings change)
+  public async reinitialize() {
+    console.log('🔄 Reinitializing email transporter...');
+    await this.initializeTransporter();
   }
 
   async sendWelcomeEmail(data: WelcomeEmailData): Promise<boolean> {
@@ -53,8 +82,12 @@ class UniversalEmailService {
       console.log('✅ Email transporter is available');
 
       const mailOptions = {
-        from: process.env.FROM_EMAIL || 'noreply@orderweb.com',
+        from: {
+          name: process.env.SMTP_FROM || 'Order Web POS',
+          address: process.env.SMTP_USER || 'noreply@orderweb.com'
+        },
         to: data.adminEmail,
+        replyTo: process.env.SMTP_USER,
         subject: `Welcome to OrderWeb - ${data.restaurantName}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -125,8 +158,12 @@ class UniversalEmailService {
       console.log('✅ Email transporter is available');
 
       const mailOptions = {
-        from: process.env.FROM_EMAIL || 'noreply@orderweb.com',
+        from: {
+          name: process.env.SMTP_FROM || 'Order Web POS',
+          address: process.env.SMTP_USER || 'noreply@orderweb.com'
+        },
         to,
+        replyTo: process.env.SMTP_USER,
         subject,
         html,
       };

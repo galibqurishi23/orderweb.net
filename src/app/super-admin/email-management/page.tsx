@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -30,6 +31,16 @@ interface EmailLog {
   error?: string;
 }
 
+interface SMTPSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password: string;
+  from: string;
+}
+
 export default function EmailManagementPage() {
   const [activeTab, setActiveTab] = useState('send');
   
@@ -43,6 +54,18 @@ export default function EmailManagementPage() {
   const [testEmail, setTestEmail] = useState('');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  
+  // SMTP Settings
+  const [smtpSettings, setSmtpSettings] = useState<SMTPSettings>({
+    enabled: false,
+    host: '',
+    port: 587,
+    secure: false,
+    user: '',
+    password: '',
+    from: 'noreply@orderweb.com'
+  });
+  const [isSavingSmtp, setIsSavingSmtp] = useState(false);
   
   // Email Templates
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([
@@ -100,7 +123,68 @@ OrderWeb Team`
 
   useEffect(() => {
     fetchEmailLogs();
+    fetchSmtpSettings();
   }, []);
+
+  const fetchSmtpSettings = async () => {
+    try {
+      const response = await fetch('/api/super-admin/smtp-settings');
+      if (response.ok) {
+        const data = await response.json();
+        setSmtpSettings({
+          enabled: data.enabled || false,
+          host: data.host || '',
+          port: data.port || 587,
+          secure: data.secure || false,
+          user: data.user || '',
+          password: data.password || '',
+          from: data.from || 'noreply@orderweb.com'
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching SMTP settings:', error);
+    }
+  };
+
+  const saveSmtpSettings = async () => {
+    setIsSavingSmtp(true);
+    try {
+      console.log('💾 Saving SMTP settings:', { ...smtpSettings, password: '***' });
+      
+      const response = await fetch('/api/super-admin/smtp-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(smtpSettings)
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        toast({
+          title: "Success",
+          description: result.message || "SMTP settings saved successfully. Email service has been reinitialized.",
+        });
+        
+        // Refresh settings to confirm save
+        await fetchSmtpSettings();
+      } else {
+        toast({
+          title: "Error",
+          description: result.error || "Failed to save SMTP settings",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
+      console.error('Error saving SMTP settings:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save SMTP settings. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSavingSmtp(false);
+    }
+  };
 
   const fetchEmailLogs = async () => {
     setIsLoadingLogs(true);
@@ -273,7 +357,7 @@ OrderWeb Team`
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="send" className="flex items-center gap-2">
             <Send className="h-4 w-4" />
             Send Email
@@ -281,6 +365,10 @@ OrderWeb Team`
           <TabsTrigger value="test" className="flex items-center gap-2">
             <Beaker className="h-4 w-4" />
             Test SMTP
+          </TabsTrigger>
+          <TabsTrigger value="smtp" className="flex items-center gap-2">
+            <Settings className="h-4 w-4" />
+            SMTP Settings
           </TabsTrigger>
           <TabsTrigger value="templates" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
@@ -341,7 +429,7 @@ OrderWeb Team`
               <Alert>
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  This email will be sent using the OrderWeb SMTP service (noreply@ordertest.co.uk).
+                  This email will be sent using the OrderWeb SMTP service ({smtpSettings.from || 'SMTP not configured'}).
                   Make sure the recipient email is valid before sending.
                 </AlertDescription>
               </Alert>
@@ -435,6 +523,161 @@ OrderWeb Team`
                   </AlertDescription>
                 </Alert>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="smtp" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                SMTP Configuration
+              </CardTitle>
+              <CardDescription>
+                Configure your SMTP server settings for sending emails. Changes take effect immediately.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/50">
+                <div className="space-y-1">
+                  <Label htmlFor="smtp-enabled" className="text-base font-medium">
+                    Enable Email Service
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Turn on/off email functionality for the system
+                  </p>
+                </div>
+                <Switch
+                  id="smtp-enabled"
+                  checked={smtpSettings.enabled}
+                  onCheckedChange={(checked) => setSmtpSettings({ ...smtpSettings, enabled: checked })}
+                />
+              </div>
+
+              {smtpSettings.enabled && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="smtp-host">SMTP Host *</Label>
+                      <Input
+                        id="smtp-host"
+                        value={smtpSettings.host}
+                        onChange={(e) => setSmtpSettings({ ...smtpSettings, host: e.target.value })}
+                        placeholder="smtp.example.com"
+                        className="w-full"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="smtp-port">SMTP Port *</Label>
+                      <Input
+                        id="smtp-port"
+                        type="number"
+                        value={smtpSettings.port}
+                        onChange={(e) => setSmtpSettings({ ...smtpSettings, port: parseInt(e.target.value) || 587 })}
+                        placeholder="587"
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div className="space-y-1">
+                      <Label htmlFor="smtp-secure" className="text-base font-medium">
+                        Use SSL/TLS
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        Enable secure connection (use for port 465)
+                      </p>
+                    </div>
+                    <Switch
+                      id="smtp-secure"
+                      checked={smtpSettings.secure}
+                      onCheckedChange={(checked) => setSmtpSettings({ ...smtpSettings, secure: checked })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="smtp-user">SMTP Username *</Label>
+                    <Input
+                      id="smtp-user"
+                      type="email"
+                      value={smtpSettings.user}
+                      onChange={(e) => setSmtpSettings({ ...smtpSettings, user: e.target.value })}
+                      placeholder="your-email@example.com"
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="smtp-password">SMTP Password *</Label>
+                    <Input
+                      id="smtp-password"
+                      type="password"
+                      value={smtpSettings.password}
+                      onChange={(e) => setSmtpSettings({ ...smtpSettings, password: e.target.value })}
+                      placeholder="Enter your SMTP password"
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="smtp-from">From Email/Name *</Label>
+                    <Input
+                      id="smtp-from"
+                      value={smtpSettings.from}
+                      onChange={(e) => setSmtpSettings({ ...smtpSettings, from: e.target.value })}
+                      placeholder="Your Name or noreply@example.com"
+                      className="w-full"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      This will appear as the sender name or email address
+                    </p>
+                  </div>
+
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>Current Configuration:</strong>
+                      <div className="mt-2 space-y-1 text-sm">
+                        <div>Host: <span className="font-mono">{smtpSettings.host || 'Not configured'}</span></div>
+                        <div>Port: <span className="font-mono">{smtpSettings.port}</span> ({smtpSettings.secure ? 'SSL/TLS' : 'No SSL'})</div>
+                        <div>User: <span className="font-mono">{smtpSettings.user || 'Not configured'}</span></div>
+                        <div>From: <span className="font-mono">{smtpSettings.from}</span></div>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                </>
+              )}
+
+              <div className="flex gap-3">
+                <Button 
+                  onClick={saveSmtpSettings} 
+                  disabled={isSavingSmtp || !smtpSettings.enabled || !smtpSettings.host || !smtpSettings.user || !smtpSettings.password}
+                  className="flex items-center gap-2"
+                >
+                  {isSavingSmtp ? (
+                    <>
+                      <Clock className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="h-4 w-4" />
+                      Save SMTP Settings
+                    </>
+                  )}
+                </Button>
+                
+                <Button 
+                  variant="outline" 
+                  onClick={fetchSmtpSettings}
+                  disabled={isSavingSmtp}
+                >
+                  Reset to Saved
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

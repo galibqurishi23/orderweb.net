@@ -5,6 +5,56 @@ import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 import type { Tenant, TenantUser, SuperAdminUser, RestaurantSettings } from './types';
 import { emailService } from './universal-email-service';
+import { getTenantDatabase } from './tenant-db-connection';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+// Helper function to create complete tenant database schema
+async function createTenantDatabaseSchema(tenantSlug: string): Promise<void> {
+  try {
+    console.log(`🏗️ Creating database schema for tenant: ${tenantSlug}`);
+    
+    // Read the schema template
+    const schemaPath = join(process.cwd(), 'create-tenant-database-schema.sql');
+    let schemaTemplate = readFileSync(schemaPath, 'utf8');
+    
+    // Replace {TENANT_SLUG} placeholder with actual slug
+    const schemaSQL = schemaTemplate.replace(/{TENANT_SLUG}/g, tenantSlug);
+    
+    // Execute the schema creation using mysql command line for reliability
+    const { exec } = require('child_process');
+    const { promisify } = require('util');
+    const execAsync = promisify(exec);
+    
+    // Write the processed schema to a temporary file
+    const tempSchemaPath = `/tmp/create_${tenantSlug}_schema.sql`;
+    const { writeFileSync } = require('fs');
+    writeFileSync(tempSchemaPath, schemaSQL);
+    
+    // Execute schema creation with proper MySQL credentials
+    console.log(`📝 Executing schema creation for tenant: ${tenantSlug}`);
+    const { stdout, stderr } = await execAsync(`mysql -u root -proot < ${tempSchemaPath}`);
+    
+    if (stderr && !stderr.includes('Warning')) {
+      console.error('❌ Schema creation error:', stderr);
+      throw new Error(`Failed to create tenant schema: ${stderr}`);
+    }
+    
+    console.log(`✅ Successfully created database schema for tenant: ${tenantSlug}`);
+    
+    // Clean up temp file
+    const { unlinkSync } = require('fs');
+    try {
+      unlinkSync(tempSchemaPath);
+    } catch (cleanupError) {
+      console.warn('⚠️ Could not clean up temp schema file:', cleanupError);
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error creating tenant database schema for ${tenantSlug}:`, error);
+    throw error;
+  }
+}
 
 // Email Service for notifications
 export async function sendWelcomeEmail(
@@ -46,11 +96,16 @@ export async function getAllTenants(): Promise<Tenant[]> {
   try {
     const [rows] = await pool.execute(`
       SELECT 
-        id, slug, name, email, phone, address, status, 
-        subscription_plan, subscription_status, trial_ends_at,
-        created_at, updated_at
-      FROM tenants 
-      ORDER BY created_at DESC
+        t.id, t.slug, t.name, t.email, t.phone, t.address, t.status, 
+        t.subscription_plan, t.subscription_status, t.trial_ends_at,
+        t.created_at, t.updated_at,
+        l.license_key,
+        l.expiration_date as license_expires_at,
+        l.status as license_status,
+        DATEDIFF(l.expiration_date, CURDATE()) as licenseDaysRemaining
+      FROM tenants t
+      LEFT JOIN licenses l ON t.id = l.tenant_id AND l.status = 'active'
+      ORDER BY t.created_at DESC
     `);
     return rows as Tenant[];
   } catch (error) {
@@ -143,6 +198,10 @@ export async function createTenant(data: {
         ]
       );
       
+      // **CREATE COMPLETE TENANT DATABASE SCHEMA**
+      console.log(`🏗️ Creating complete database schema for tenant: ${data.slug}`);
+      await createTenantDatabaseSchema(data.slug);
+
       // Initialize tenant settings with default values
       const defaultSettings = {
         name: data.name,
@@ -200,61 +259,64 @@ export async function createTenant(data: {
           accent: '210 40% 96%'
         }
       };
-      
-      await connection.execute(
-        `INSERT INTO tenant_settings (tenant_id, settings_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?)`,
-        [
-          tenantId,
-          JSON.stringify(defaultSettings),
-          now,
-          now
-        ]
-      );
 
-      // **CREATE DEFAULT EMAIL TEMPLATES** - Copy from kitchen tenant master templates
-      console.log(`📧 Creating default email templates for new tenant: ${data.slug}`);
+      // Insert default settings into tenant-specific database (not the main DB)
       try {
-        // Get master templates from kitchen tenant
-        const [masterTemplatesResult] = await connection.execute(
-          'SELECT template_name, template_type, subject, html_content, text_content, variables, customization, is_active FROM email_templates WHERE tenant_slug = ? ORDER BY id',
-          ['kitchen']
-        );
-        
-        const masterTemplates = masterTemplatesResult as any[];
-        console.log(`📋 Found ${masterTemplates.length} master templates to copy for ${data.slug}`);
-        
-        // Create templates for the new tenant
-        for (const template of masterTemplates) {
-          await connection.execute(
-            `INSERT INTO email_templates (
-              tenant_slug, template_name, template_type, subject, html_content, 
-              text_content, variables, customization, is_active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              data.slug,
-              template.template_name,
-              template.template_type,
-              template.subject,
-              template.html_content,
-              template.text_content,
-              template.variables,
-              template.customization,
-              template.is_active,
-              now,
-              now
-            ]
+        const { getTenantDatabase } = await import('./tenant-db-connection');
+        const tenantDb = getTenantDatabase(data.slug);
+        const tenantConn = await tenantDb.getConnection();
+        try {
+          await tenantConn.execute(
+            `INSERT INTO tenant_settings (tenant_id, settings_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?)`,
+            [tenantId, JSON.stringify(defaultSettings), now, now]
           );
-          
-          console.log(`✅ Created ${template.template_type} template for ${data.slug}`);
+
+          // **CREATE DEFAULT EMAIL TEMPLATES** - Copy from kitchen tenant master templates into tenant DB
+          console.log(`📧 Copying default email templates into tenant DB for: ${data.slug}`);
+
+          // Get master templates from main DB (kitchen tenant templates stored in main DB under tenant_slug 'kitchen')
+          const [masterTemplatesResult] = await connection.execute(
+            'SELECT template_name, template_type, subject, html_content, text_content, variables, customization, is_active FROM email_templates WHERE tenant_slug = ? ORDER BY id',
+            ['kitchen']
+          );
+
+          const masterTemplates = masterTemplatesResult as any[];
+          for (const template of masterTemplates) {
+            await tenantConn.execute(
+              `INSERT INTO email_templates (
+                tenant_slug, template_name, template_type, subject, html_content,
+                text_content, variables, customization, is_active, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+              [
+                data.slug,
+                template.template_name,
+                template.template_type,
+                template.subject,
+                template.html_content,
+                template.text_content,
+                template.variables,
+                template.customization,
+                template.is_active,
+                now,
+                now
+              ]
+            );
+          }
+
+          console.log(`🎉 Copied ${masterTemplates.length} email templates for ${data.slug}`);
+        } finally {
+          tenantConn.release();
         }
-        
-        console.log(`🎉 Successfully created ${masterTemplates.length} email templates for ${data.slug}`);
-        
-      } catch (emailTemplateError) {
-        console.error(`❌ Error creating email templates for ${data.slug}:`, emailTemplateError);
-        // Don't fail the entire tenant creation if email templates fail
-        console.warn('⚠️  Continuing tenant creation despite email template error');
+      } catch (tenantDbError) {
+        // If tenant DB is not available or tables missing, log and continue (we already have main DB settings as fallback)
+        console.error('❌ Error inserting default settings into tenant DB:', tenantDbError);
+        console.warn('⚠️ Falling back to inserting default settings into main DB');
+        await connection.execute(
+          `INSERT INTO tenant_settings (tenant_id, settings_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?)`,
+          [tenantId, JSON.stringify(defaultSettings), now, now]
+        );
       }
       
       await connection.commit();
@@ -340,18 +402,46 @@ export async function getTenantSettings(tenantId: string): Promise<RestaurantSet
       console.log('Getting settings for tenant:', tenantId);
     }
     
-    // Let's try to debug if the pool is working correctly
+    // First, get the tenant slug from the main database
     const connection = await pool.getConnection();
+    let tenantSlug: string | null = null;
+    
+    try {
+      const [tenantRows] = await connection.execute(
+        'SELECT slug FROM tenants WHERE id = ? AND status IN ("active", "trial")',
+        [tenantId]
+      );
+      const tenants = tenantRows as any[];
+      
+      if (tenants.length === 0) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('No tenant found with ID:', tenantId);
+        }
+        return null;
+      }
+      
+      tenantSlug = tenants[0].slug;
+    } finally {
+      connection.release();
+    }
+    
+    if (!tenantSlug) return null;
+    
+    // Now get settings from tenant-specific database
+    const tenantDb = getTenantDatabase(tenantSlug);
+    const tenantConnection = await tenantDb.getConnection();
+    
     if (process.env.NODE_ENV === 'development') {
-      console.log('Got connection from pool');
+      console.log(`Got connection from tenant pool for: ${tenantSlug}`);
     }
     
     try {
-      const [rows] = await connection.execute(
+      const [rows] = await tenantConnection.execute(
         'SELECT settings_json FROM tenant_settings WHERE tenant_id = ?',
         [tenantId]
       );
       const settings = rows as any[];
+      
       if (process.env.NODE_ENV === 'development') {
         console.log('Settings rows found:', settings.length);
       }
@@ -360,12 +450,11 @@ export async function getTenantSettings(tenantId: string): Promise<RestaurantSet
         if (process.env.NODE_ENV === 'development') {
           console.log('Settings JSON:', settings[0].settings_json);
         }
-        // The settings are stored as a JSON string, so we need to parse it.
         return JSON.parse(settings[0].settings_json) as RestaurantSettings;
       }
       return null;
     } finally {
-      connection.release();
+      tenantConnection.release();
     }
   } catch (error) {
     console.error('Error fetching tenant settings:', error);
@@ -380,13 +469,11 @@ export async function getTenantSettingsBySlug(slug: string): Promise<RestaurantS
       console.log('Getting settings for tenant slug:', slug);
     }
     
+    // First get the tenant ID from the main database
     const connection = await pool.getConnection();
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Got connection from pool');
-    }
+    let tenantId: string | null = null;
     
     try {
-      // First get the tenant ID from the slug
       const [tenantRows] = await connection.execute(
         'SELECT id FROM tenants WHERE slug = ? AND status IN ("active", "trial")',
         [slug]
@@ -400,13 +487,26 @@ export async function getTenantSettingsBySlug(slug: string): Promise<RestaurantS
         return null;
       }
       
-      const tenantId = tenants[0].id;
+      tenantId = tenants[0].id;
       if (process.env.NODE_ENV === 'development') {
         console.log('Found tenant ID:', tenantId);
       }
-      
-      // Now get the settings
-      const [rows] = await connection.execute(
+    } finally {
+      connection.release();
+    }
+    
+    if (!tenantId) return null;
+    
+    // Now get settings from tenant-specific database
+    const tenantDb = getTenantDatabase(slug);
+    const tenantConnection = await tenantDb.getConnection();
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`Got connection from tenant pool for: ${slug}`);
+    }
+    
+    try {
+      const [rows] = await tenantConnection.execute(
         'SELECT settings_json FROM tenant_settings WHERE tenant_id = ?',
         [tenantId]
       );
@@ -424,7 +524,7 @@ export async function getTenantSettingsBySlug(slug: string): Promise<RestaurantS
       }
       return null;
     } finally {
-      connection.release();
+      tenantConnection.release();
     }
   } catch (error) {
     console.error('Error fetching tenant settings by slug:', error);
@@ -435,9 +535,38 @@ export async function getTenantSettingsBySlug(slug: string): Promise<RestaurantS
 // Update tenant settings
 export async function updateTenantSettings(tenantId: string, settings: RestaurantSettings): Promise<void> {
   try {
+    // First, get the tenant slug from the main database
     const connection = await pool.getConnection();
+    let tenantSlug: string | null = null;
+    
     try {
-      await connection.beginTransaction();
+      const [tenantRows] = await connection.execute(
+        'SELECT slug FROM tenants WHERE id = ? AND status IN ("active", "trial")',
+        [tenantId]
+      );
+      const tenants = tenantRows as any[];
+      
+      if (tenants.length === 0) {
+        throw new Error(`No tenant found with ID: ${tenantId}`);
+      }
+      
+      tenantSlug = tenants[0].slug;
+    } finally {
+      connection.release();
+    }
+    
+    if (!tenantSlug) {
+      throw new Error(`Could not find tenant slug for ID: ${tenantId}`);
+    }
+
+    // Now update settings in tenant-specific database
+    console.log('🔌 Getting tenant database connection for:', tenantSlug);
+    const tenantDb = getTenantDatabase(tenantSlug);
+    const tenantConnection = await tenantDb.getConnection();
+    console.log('✅ Got tenant database connection successfully');
+    
+    try {
+      await tenantConnection.beginTransaction();
 
       // Determine which payment gateway is active based on enabled settings
       let activePaymentGateway = 'stripe'; // Default to stripe
@@ -452,10 +581,10 @@ export async function updateTenantSettings(tenantId: string, settings: Restauran
         }
       }
 
-      console.log(`🎯 Setting active payment gateway to: ${activePaymentGateway} for tenant: ${tenantId}`);
+      console.log(`🎯 Setting active payment gateway to: ${activePaymentGateway} for tenant: ${tenantId} (${tenantSlug})`);
 
       // Use INSERT ON DUPLICATE KEY UPDATE for upsert functionality
-      await connection.execute(
+      await tenantConnection.execute(
         `INSERT INTO tenant_settings (tenant_id, settings_json, active_payment_gateway, created_at, updated_at) 
          VALUES (?, ?, ?, NOW(), NOW()) 
          ON DUPLICATE KEY UPDATE 
@@ -470,7 +599,7 @@ export async function updateTenantSettings(tenantId: string, settings: Restauran
         const gpSettings = settings.paymentSettings.globalPayments;
         
         try {
-          await connection.execute(
+          await tenantConnection.execute(
             `UPDATE tenant_settings SET 
              global_payments_app_id = ?,
              global_payments_app_key = ?,
@@ -493,14 +622,14 @@ export async function updateTenantSettings(tenantId: string, settings: Restauran
         }
       }
 
-      await connection.commit();
-      console.log('✅ Tenant settings updated successfully for tenant:', tenantId);
+      await tenantConnection.commit();
+      console.log(`✅ Tenant settings updated successfully for tenant: ${tenantId} (${tenantSlug})`);
       
     } catch (error) {
-      await connection.rollback();
+      await tenantConnection.rollback();
       throw error;
     } finally {
-      connection.release();
+      tenantConnection.release();
     }
   } catch (error) {
     console.error('Error updating tenant settings:', error);
@@ -829,45 +958,47 @@ export async function getTenantOrderStats(tenantId: string): Promise<{
   totalOrders: number;
 }> {
   try {
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
-    console.log('🔍 Getting stats for tenant:', tenantId);
-    
-    // Get today's orders count
-    const [todayOrdersResult] = await pool.execute(
-      'SELECT COUNT(*) as count FROM orders WHERE tenant_id = ? AND createdAt >= ?',
-      [tenantId, todayStart]
-    );
-    const todayOrders = (todayOrdersResult as any[])[0].count;
-    
-    // Get today's revenue
-    const [todayRevenueResult] = await pool.execute(
-      'SELECT SUM(total) as total FROM orders WHERE tenant_id = ? AND createdAt >= ? AND status != ?',
-      [tenantId, todayStart, 'cancelled']
-    );
-    const todayRevenue = (todayRevenueResult as any[])[0].total || 0;
+      const today = new Date();
+      // Normalize to start of day in server local timezone
+      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+      console.log('🔍 Getting stats for tenant:', tenantId, 'todayStart=', todayStart.toISOString());
+
+      // NOTE: Columns in the DB are snake_case: created_at, total_amount
+      // Get today's orders count
+      const [todayOrdersResult] = await pool.execute(
+        'SELECT COUNT(*) as count FROM orders WHERE tenant_id = ? AND created_at >= ?',
+        [tenantId, todayStart]
+      );
+      const todayOrders = ((todayOrdersResult as any[])[0] && (todayOrdersResult as any[])[0].count) || 0;
+
+      // Get today's revenue (use total_amount column and exclude cancelled/refunded)
+      const [todayRevenueResult] = await pool.execute(
+        'SELECT SUM(total_amount) as total FROM orders WHERE tenant_id = ? AND created_at >= ? AND status NOT IN (?, ?)',
+        [tenantId, todayStart, 'cancelled', 'refunded']
+      );
+      const todayRevenue = ((todayRevenueResult as any[])[0] && (todayRevenueResult as any[])[0].total) || 0;
     
     // Get total customers count
     const [totalCustomersResult] = await pool.execute(
-      'SELECT COUNT(DISTINCT customerId) as count FROM orders WHERE tenant_id = ? AND customerId IS NOT NULL',
+      'SELECT COUNT(DISTINCT customer_id) as count FROM orders WHERE tenant_id = ? AND customer_id IS NOT NULL',
       [tenantId]
     );
-    const totalCustomers = (totalCustomersResult as any[])[0].count;
+    const totalCustomers = ((totalCustomersResult as any[])[0] && (totalCustomersResult as any[])[0].count) || 0;
     
     // Get total orders count (all confirmed orders)
     const [totalOrdersResult] = await pool.execute(
       'SELECT COUNT(*) as count FROM orders WHERE tenant_id = ? AND status = ?',
       [tenantId, 'confirmed']
     );
-    const totalOrders = (totalOrdersResult as any[])[0].count;
+    const totalOrders = ((totalOrdersResult as any[])[0] && (totalOrdersResult as any[])[0].count) || 0;
     
     // Get total refunds
     const [totalRefundsResult] = await pool.execute(
-      'SELECT SUM(total) as total FROM orders WHERE tenant_id = ? AND status = ?',
+      'SELECT SUM(total_amount) as total FROM orders WHERE tenant_id = ? AND status = ?',
       [tenantId, 'refunded']
     );
-    const totalRefunds = (totalRefundsResult as any[])[0].total || 0;
+    const totalRefunds = ((totalRefundsResult as any[])[0] && (totalRefundsResult as any[])[0].total) || 0;
     
     const stats = {
       todayOrders,
@@ -921,3 +1052,5 @@ export async function getTenantOrders(tenantId: string, limit: number = 50): Pro
     throw new Error('Failed to fetch tenant orders');
   }
 }
+
+

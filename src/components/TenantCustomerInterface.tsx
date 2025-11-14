@@ -76,6 +76,7 @@ import { getCurrencySymbol } from '@/lib/currency-utils';
 import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
+import { SimpleCalendar } from '@/components/ui/simple-calendar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
@@ -90,7 +91,6 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import * as TenantVoucherService from '@/lib/tenant-voucher-service';
-import * as TenantZoneService from '@/lib/tenant-zone-service';
 import { getRestaurantStatus } from '@/lib/opening-hours-utils';
 import { createSuperOptimizedPlaceOrderHandler } from '@/lib/super-optimized-place-order';
 
@@ -1060,14 +1060,7 @@ const OrderSummary = React.memo(function OrderSummary({
 
   // Check if card payment is enabled based on payment configuration
   const isCardPaymentEnabled = React.useMemo(() => {
-    const result = paymentConfig?.configured && paymentConfig?.activeGateway;
-    console.log('🔧 isCardPaymentEnabled calculation:', {
-      paymentConfig,
-      configured: paymentConfig?.configured,
-      activeGateway: paymentConfig?.activeGateway,
-      result: result
-    });
-    return result;
+    return paymentConfig?.configured && paymentConfig?.activeGateway;
   }, [paymentConfig]);
 
   // Determine available payment methods
@@ -1086,14 +1079,6 @@ const OrderSummary = React.memo(function OrderSummary({
       methods.push('gift_card');
     }
 
-    console.log('🔧 availablePaymentMethods calculation:', {
-      cashEnabled: restaurantSettings?.paymentSettings?.cash?.enabled,
-      cardEnabled: isCardPaymentEnabled,
-      giftCardEnabled: restaurantSettings?.paymentSettings?.giftCards?.enabled,
-      methods,
-      restaurantPaymentSettings: restaurantSettings?.paymentSettings
-    });
-
     return methods;
   }, [restaurantSettings?.paymentSettings?.cash?.enabled, restaurantSettings?.paymentSettings?.giftCards?.enabled, isCardPaymentEnabled]);
 
@@ -1106,6 +1091,7 @@ const OrderSummary = React.memo(function OrderSummary({
   const [advanceDate, setAdvanceDate] = React.useState<Date | undefined>();
   const [advanceTime, setAdvanceTime] = React.useState('');
   const [timeSlots, setTimeSlots] = React.useState<string[]>([]);
+  const [isDateDialogOpen, setIsDateDialogOpen] = React.useState(false);
   
   const [postcode, setPostcode] = React.useState(currentUser?.addresses?.find(a => a.isDefault)?.postcode || '');
   const [deliveryFee, setDeliveryFee] = React.useState(0);
@@ -1118,8 +1104,7 @@ const OrderSummary = React.memo(function OrderSummary({
   const [orderNote, setOrderNote] = React.useState(''); // Overall order note/special instructions
   
   // Loyalty Points Redemption State
-  // Remove separate customerAuth state - use TenantDataContext's authentication state
-  // const [customerAuth, setCustomerAuth] = React.useState<{authenticated: boolean, customer: any} | null>(null);
+  const [customerAuth, setCustomerAuth] = React.useState<{authenticated: boolean, customer: any} | null>(null);
   const [loyaltyData, setLoyaltyData] = React.useState<{pointsBalance: number} | null>(null);
   const [pointsToRedeem, setPointsToRedeem] = React.useState('');
   const [pointsDiscount, setPointsDiscount] = React.useState(0);
@@ -1131,6 +1116,9 @@ const OrderSummary = React.memo(function OrderSummary({
   const [giftCardBalance, setGiftCardBalance] = React.useState<number | null>(null);
   const [giftCardStatus, setGiftCardStatus] = React.useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle');
   const [giftCardError, setGiftCardError] = React.useState('');
+  
+  // Order submission state
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   
   // Update selected payment method when available methods change
   React.useEffect(() => {
@@ -1160,37 +1148,34 @@ const OrderSummary = React.memo(function OrderSummary({
         }
         
         try {
-          // Use API endpoint instead of direct server function call
+          console.log('🔍 Calling delivery fee API:', { tenantId: tenantData.id, postcode, orderValue: subtotal });
+          
           const response = await fetch('/api/tenant/zones/validate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tenantId: tenantData.id,
-              postcode: postcode.trim(),
+              postcode: postcode,
               orderValue: subtotal
             })
           });
-
-          const result = await response.json();
           
-          if (response.ok && result.success) {
-            if (result.data.error) {
-              setDeliveryError(result.data.error);
-              setDeliveryFee(0);
-            } else if (result.data.fee !== undefined) {
-              setDeliveryError('');
-              setDeliveryFee(result.data.fee);
-            } else {
-              setDeliveryError('');
-              setDeliveryFee(0);
-            }
-          } else {
-            setDeliveryError(result.error || 'Unable to validate delivery postcode');
+          const result = await response.json();
+          console.log('✅ Delivery fee API response:', result);
+          
+          if (!result.success) {
+            setDeliveryError(result.error || 'Unable to calculate delivery fee');
             setDeliveryFee(0);
+          } else if (result.data.error) {
+            setDeliveryError(result.data.error);
+            setDeliveryFee(0);
+          } else {
+            setDeliveryError('');
+            setDeliveryFee(result.data.fee || 0);
           }
         } catch (error) {
-          console.error('Error calculating delivery fee:', error);
-          setDeliveryError('Unable to calculate delivery fee. Please check your postcode.');
+          console.error('💥 Error calculating delivery fee:', error);
+          setDeliveryError('Unable to calculate delivery fee');
           setDeliveryFee(0);
         }
       } else {
@@ -1202,57 +1187,35 @@ const OrderSummary = React.memo(function OrderSummary({
     calculateDeliveryFee();
   }, [selectedOrderType, advanceFulfillmentType, postcode, subtotal, tenantData?.id]);
 
-  // Check for loyalty data when authentication state changes in TenantDataContext
+  // Check customer authentication for loyalty points
   React.useEffect(() => {
-    const fetchLoyaltyData = async () => {
-      if (!isAuthenticated || !currentUser) {
-        console.log('� [LOYALTY-DEBUG] Not authenticated - clearing loyalty data');
-        setLoyaltyData(null);
-        setShowPointsSection(false);
-        return;
-      }
-
-      console.log('✅ [LOYALTY-DEBUG] Customer authenticated:', currentUser.name, '- fetching loyalty data');
-      
+    const checkCustomerAuth = async () => {
       try {
-        const loyaltyResponse = await fetch('/api/customer/loyalty', {
-          credentials: 'include',
-          cache: 'no-cache',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate'
-          }
+        const response = await fetch('/api/customer/check-auth', {
+          credentials: 'include'
         });
+        const data = await response.json();
+        setCustomerAuth(data);
         
-        console.log('🎯 [LOYALTY-DEBUG] Loyalty response status:', loyaltyResponse.status);
-        
-        if (loyaltyResponse.ok) {
+        if (data.authenticated) {
+          // Fetch loyalty data
+          const loyaltyResponse = await fetch('/api/customer/loyalty', {
+            credentials: 'include'
+          });
           const loyaltyResult = await loyaltyResponse.json();
-          console.log('🎯 [LOYALTY-DEBUG] Loyalty response data:', JSON.stringify(loyaltyResult, null, 2));
-
-          if (loyaltyResult.success && loyaltyResult.loyalty) {
-            console.log('✅ [LOYALTY-DEBUG] Setting loyalty data with', loyaltyResult.loyalty.pointsBalance, 'points');
+          if (loyaltyResult.success) {
             setLoyaltyData(loyaltyResult.loyalty);
             setShowPointsSection(true);
-          } else {
-            console.log('❌ [LOYALTY-DEBUG] No valid loyalty data:', loyaltyResult.error || 'Unknown error');
-            setLoyaltyData(null);
-            setShowPointsSection(false);
           }
-        } else {
-          console.error('❌ [LOYALTY-DEBUG] Loyalty API error:', loyaltyResponse.status, loyaltyResponse.statusText);
-          setLoyaltyData(null);
-          setShowPointsSection(false);
         }
-      } catch (loyaltyError) {
-        console.error('❌ [LOYALTY-DEBUG] Loyalty fetch error:', loyaltyError);
-        setLoyaltyData(null);
-        setShowPointsSection(false);
+      } catch (error) {
+        console.error('Error checking customer auth:', error);
+        setCustomerAuth({ authenticated: false, customer: null });
       }
     };
-
-    fetchLoyaltyData();
-  }, [isAuthenticated, currentUser]); // Trigger when TenantDataContext auth state changes
+    
+    checkCustomerAuth();
+  }, []);
 
   // Generate time slots for advance orders with smart same-day logic
   React.useEffect(() => {
@@ -1396,7 +1359,7 @@ const OrderSummary = React.memo(function OrderSummary({
     }
 
     try {
-      const response = await fetch('/api/customer/loyalty/redeem', {
+      const response = await fetch('/api/customer/redeem-points', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1729,9 +1692,9 @@ const OrderSummary = React.memo(function OrderSummary({
       const orderResult = await createOrder(orderData);
       
       // Process loyalty points redemption if points were used
-      if (parseInt(pointsToRedeem) > 0 && isAuthenticated && currentUser) {
+      if (parseInt(pointsToRedeem) > 0 && customerAuth) {
         try {
-          const response = await fetch('/api/customer/loyalty/redeem', {
+          const response = await fetch('/api/customer/redeem-points', {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -1740,24 +1703,12 @@ const OrderSummary = React.memo(function OrderSummary({
             body: JSON.stringify({
               pointsToRedeem: parseInt(pointsToRedeem),
               orderId: orderResult.orderId,
-              orderNumber: orderResult.orderNumber,
-              discountAmount: pointsDiscount.toFixed(2)
+              orderTotal: finalTotal
             }),
           });
 
-          const result = await response.json();
-          
-          if (!response.ok || !result.success) {
-            console.error('Failed to redeem points:', result.error);
-            // Order was placed successfully, but points redemption failed
-            // Show warning to user
-            toast({
-              title: 'Note',
-              description: 'Order placed but loyalty points were not deducted. Please contact support.',
-              variant: 'destructive',
-            });
-          } else {
-            console.log('✅ Loyalty points redeemed successfully:', result.data);
+          if (!response.ok) {
+            console.error('Failed to redeem points, but order was placed successfully');
           }
         } catch (error) {
           console.error('Error redeeming points:', error);
@@ -2001,8 +1952,8 @@ const OrderSummary = React.memo(function OrderSummary({
                   {/* Date Selection */}
                   <div className="space-y-2">
                     <Label className="font-medium text-gray-800">Choose Date</Label>
-                    <Popover>
-                      <PopoverTrigger asChild>
+                    <Dialog open={isDateDialogOpen} onOpenChange={setIsDateDialogOpen}>
+                      <DialogTrigger asChild>
                         <Button 
                           variant="outline" 
                           className="w-full justify-start text-left h-10 bg-white border border-gray-300"
@@ -2013,14 +1964,18 @@ const OrderSummary = React.memo(function OrderSummary({
                             <span className="text-gray-500">Select a date</span>
                           )}
                         </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[425px]">
+                        <DialogHeader>
+                          <DialogTitle>Select Date</DialogTitle>
+                        </DialogHeader>
+                        <SimpleCalendar
                           selected={advanceDate}
+                          defaultMonth={new Date()}
                           onSelect={(date) => {
                             setAdvanceDate(date);
                             setAdvanceTime('');
+                            setIsDateDialogOpen(false); // Auto-close dialog after selection
                           }}
                           disabled={(date) => {
                             const today = new Date();
@@ -2030,10 +1985,9 @@ const OrderSummary = React.memo(function OrderSummary({
                             maxDate.setDate(today.getDate() + maxDays);
                             return date < today || date > maxDate;
                           }}
-                          initialFocus
                         />
-                      </PopoverContent>
-                    </Popover>
+                      </DialogContent>
+                    </Dialog>
                   </div>
 
                   {/* Time Selection */}
@@ -2365,13 +2319,20 @@ const OrderSummary = React.memo(function OrderSummary({
                 subtotal,
                 deliveryFee,
                 voucherDiscount,
-                pointsDiscount: 0, // Add this since it's expected
+                pointsDiscount,
                 finalTotal,
                 appliedVoucher,
                 router,
                 selectedPaymentMethod,
                 giftCardCode,
-                currencySymbol
+                currencySymbol,
+                pointsToRedeem,
+                customerAuth,
+                loyaltyData,
+                setLoyaltyData,
+                setAppliedVoucher,
+                setVoucherInput,
+                setPointsToRedeem
               };
               
               await handlePlaceOrder(formData, context);
@@ -2510,15 +2471,6 @@ const OrderSummary = React.memo(function OrderSummary({
                 {/* Payment Method */}
                 <div>
                   <Label>Payment Method</Label>
-                  {(() => {
-                    console.log('🎯 RENDERING PAYMENT METHODS:', {
-                      availablePaymentMethods,
-                      selectedPaymentMethod,
-                      paymentConfig,
-                      timestamp: new Date().toISOString()
-                    });
-                    return null;
-                  })()}
                   <RadioGroup value={selectedPaymentMethod} onValueChange={(value: any) => setSelectedPaymentMethod(value)}>
                     {availablePaymentMethods.includes('cash') && (
                       <div className="flex items-center space-x-2">

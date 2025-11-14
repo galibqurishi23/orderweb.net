@@ -4,7 +4,14 @@ import { LicenseService } from '@/lib/license-service';
 export async function GET() {
   try {
     const licenses = await LicenseService.getAllLicenses();
-    return NextResponse.json(licenses);
+    const response = NextResponse.json(licenses);
+    
+    // Add cache-busting headers
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    
+    return response;
   } catch (error) {
     console.error('Error fetching licenses:', error);
     return NextResponse.json(

@@ -75,7 +75,7 @@ interface ShopItem {
 
 export default function AdminGiftCardsPage() {
     const params = useParams();
-    const tenant = params.tenant as string;
+    const tenant = params?.tenant as string;
     const { toast } = useToast();
 
     const [loading, setLoading] = useState(true);

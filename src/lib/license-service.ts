@@ -312,13 +312,18 @@ export class LicenseService {
 
       const tenantId = tenantRows[0].id;
 
-      // Check if tenant already has an active license
+      // Check if tenant already has a license
       const existingLicense = await this.getTenantLicense(tenantId);
-      if (existingLicense && (existingLicense.status === 'active' || existingLicense.status === 'grace_period')) {
-        return {
-          success: false,
-          message: 'This restaurant already has an active license'
-        };
+      
+      // If there's an existing license, deactivate it first (we'll replace it)
+      if (existingLicense) {
+        console.log(`🔄 Replacing existing license ${existingLicense.license_key} with new one for tenant ${tenantId}`);
+        
+        // Deactivate the old license by setting status to 'expired'
+        await db.execute(
+          `UPDATE licenses SET status = 'expired', updated_at = NOW() WHERE tenant_id = ?`,
+          [tenantId]
+        );
       }
 
       // Calculate actual expiration date (from today + duration)
@@ -326,7 +331,7 @@ export class LicenseService {
       actualExpirationDate.setDate(actualExpirationDate.getDate() + pendingActivation.duration_days);
       const actualExpirationDateString = actualExpirationDate.toISOString().split('T')[0];
 
-      // Create the actual license
+      // Create the new license
       const [result] = await db.execute(
         `INSERT INTO licenses (tenant_id, license_key, status, expiration_date, notes) 
          VALUES (?, ?, 'active', ?, ?)`,
@@ -343,7 +348,9 @@ export class LicenseService {
 
       return {
         success: true,
-        message: 'License activated successfully!',
+        message: existingLicense 
+          ? `License replaced successfully! Old license deactivated and new license activated.`
+          : 'License activated successfully!',
         license: activatedLicense
       };
 
@@ -461,5 +468,48 @@ export class LicenseService {
     ) as [RowDataPacket[], any];
 
     return rows[0] as any;
+  }
+
+  /**
+   * Get comprehensive license statistics for dashboard
+   */
+  static async getLicenseStatistics(): Promise<{
+    totalLicenses: number;
+    activeLicenses: number;
+    expiredLicenses: number;
+    expiringSoon: number;
+    gracePeriodLicenses: number;
+    suspendedLicenses: number;
+  }> {
+    // Get basic counts
+    const [statsRows] = await db.execute(
+      `SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+        SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) as expired,
+        SUM(CASE WHEN status = 'grace_period' THEN 1 ELSE 0 END) as grace_period,
+        SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) as suspended
+       FROM licenses`
+    ) as [RowDataPacket[], any];
+
+    // Get count of licenses expiring in the next 30 days (active licenses only)
+    const [expiringRows] = await db.execute(
+      `SELECT COUNT(*) as expiring_soon 
+       FROM licenses 
+       WHERE status = 'active' 
+       AND expiration_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)`
+    ) as [RowDataPacket[], any];
+
+    const stats = statsRows[0] as any;
+    const expiring = expiringRows[0] as any;
+
+    return {
+      totalLicenses: parseInt(stats.total) || 0,
+      activeLicenses: parseInt(stats.active) || 0,
+      expiredLicenses: parseInt(stats.expired) || 0,
+      expiringSoon: parseInt(expiring.expiring_soon) || 0,
+      gracePeriodLicenses: parseInt(stats.grace_period) || 0,
+      suspendedLicenses: parseInt(stats.suspended) || 0
+    };
   }
 }

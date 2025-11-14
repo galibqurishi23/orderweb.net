@@ -1,14 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { LicenseService } from '@/lib/license-service';
-
-// Force dynamic rendering - no caching
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
 
 export async function GET() {
   try {
-    const pendingActivations = await LicenseService.getPendingActivations();
-    const response = NextResponse.json(pendingActivations);
+    const stats = await LicenseService.getLicenseStatistics();
+    
+    const response = NextResponse.json({
+      success: true,
+      data: stats
+    });
     
     // Add cache-busting headers
     response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -17,9 +17,12 @@ export async function GET() {
     
     return response;
   } catch (error) {
-    console.error('Error fetching pending activations:', error);
+    console.error('Error fetching license statistics:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch pending activations' },
+      { 
+        success: false,
+        error: 'Failed to fetch license statistics' 
+      },
       { status: 500 }
     );
   }

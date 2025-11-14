@@ -17,10 +17,7 @@ export async function DELETE(
 
     await LicenseService.deletePendingActivation(activationId);
 
-    return NextResponse.json(
-      { message: 'Activation key deleted successfully' },
-      { status: 200 }
-    );
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error deleting activation key:', error);
     

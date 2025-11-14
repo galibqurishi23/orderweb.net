@@ -368,6 +368,7 @@ export interface Tenant {
   
   // License information
   license_id?: string;
+  license_key?: string;
   license_expires_at?: string;
   license_status?: string;
   key_code?: string;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+import { emailService } from '@/lib/universal-email-service';
 
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 
@@ -130,9 +131,13 @@ export async function POST(request: NextRequest) {
       delete process.env.SMTP_FROM;
     }
 
+    // Reinitialize email service with new settings
+    console.log('🔄 Reinitializing email service with updated SMTP settings...');
+    await emailService.reinitialize();
+
     return NextResponse.json({
       success: true,
-      message: 'SMTP settings updated successfully'
+      message: 'SMTP settings updated successfully. Email service reinitialized.'
     });
 
   } catch (error) {

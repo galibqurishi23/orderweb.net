@@ -43,10 +43,18 @@ export function createSuperOptimizedPlaceOrderHandler({
 }) {
   
   return function handlePlaceOrder(formData: FormData, context: any) {
+    console.log('🎬 handlePlaceOrder FUNCTION CALLED - About to start async IIFE');
+    console.log('📥 Received formData:', formData);
+    console.log('📥 Received context:', context);
+    
     return (async () => {
+      console.log('🔥 handlePlaceOrder ASYNC IIFE STARTED');
       try {
+        console.log('📋 Step 1: Extracting customer info...');
         // 🚀 Step 1: Smart extraction and validation (replaces 100+ lines)
         const customerInfo = FormDataExtractor.extractCustomerInfo(formData);
+        console.log('✅ Customer info extracted:', customerInfo);
+        
         const validationContext: OrderValidationContext = {
           selectedOrderType: context.selectedOrderType,
           availableOrderTypes: context.availableOrderTypes,
@@ -57,6 +65,7 @@ export function createSuperOptimizedPlaceOrderHandler({
           deliveryError: context.deliveryError
         };
 
+        console.log('📋 Step 2: Running validation pipeline...');
         // 🚀 Step 2: Smart validation pipeline (replaces 80+ lines)
         const validations = [
           { type: 'order-type', validator: () => OrderValidator.validateOrderType(validationContext) },
@@ -69,6 +78,7 @@ export function createSuperOptimizedPlaceOrderHandler({
         for (const { type, validator } of validations) {
           const result = validator();
           if (!result.isValid) {
+            console.log(`❌ Validation failed: ${type} - ${result.error}`);
             const error = ValidationErrorMapper.mapValidationError(type, { 
               ...context, 
               message: result.error 
@@ -77,9 +87,12 @@ export function createSuperOptimizedPlaceOrderHandler({
             return;
           }
         }
+        console.log('✅ All validations passed');
 
+        console.log('📋 Step 3: Checking payment method...');
         // 🚀 Step 3: Smart payment processing (replaces 50+ lines)
         if (context.selectedPaymentMethod === 'card') {
+          console.log('💳 Card payment selected, redirecting to payment page...');
           const paymentData = PaymentOrderContextBuilder.buildPaymentOrderData(
             customerInfo, context, {
               subtotal: context.subtotal,
@@ -97,6 +110,7 @@ export function createSuperOptimizedPlaceOrderHandler({
 
         // 🔔 Gift card payment: redeem before creating order
         if (context.selectedPaymentMethod === 'gift_card') {
+          console.log('🎁 Gift card payment selected...');
           if (!context.giftCardCode || !context.tenantData?.slug) {
             toast({
               title: 'Gift Card Required',
@@ -132,7 +146,8 @@ export function createSuperOptimizedPlaceOrderHandler({
         }
 
         // 🚀 Step 4: Smart order creation (replaces 40+ lines)
-        console.log('🔍 About to create order with data:', JSON.stringify({
+        console.log('� Step 4: Building order data...');
+        console.log('�🔍 About to create order with data:', JSON.stringify({
           customerInfo,
           context: {
             order: context.order,
@@ -155,42 +170,60 @@ export function createSuperOptimizedPlaceOrderHandler({
         if (context.selectedPaymentMethod === 'gift_card') {
           (orderData as any).paymentMethod = 'gift_card';
         }
-        
-        console.log('🔍 Built order data:', JSON.stringify(orderData, null, 2));
 
+        console.log('🎯 About to call createOrder with orderData');
         const orderResult = await createOrder(orderData);
+        console.log('✅ Order created successfully:', orderResult);
 
-        // 🚀 Step 5: Smart post-processing (replaces 30+ lines)
-        await Promise.all([
-          PostOrderProcessor.processLoyaltyPoints(
-            context.pointsToRedeem, context.customerAuth, orderResult, 
-            context.finalTotal, context.loyaltyData, context.setLoyaltyData
-          ),
-          PostOrderProcessor.processVoucherUsage(
-            context.appliedVoucher, context.tenantData?.id, TenantVoucherService
-          )
-        ]);
+        // Step 5: Smart post-processing
+        console.log('🔄 Starting post-processing (loyalty & voucher)...');
+        try {
+          await Promise.all([
+            PostOrderProcessor.processLoyaltyPoints(
+              context.pointsToRedeem, context.customerAuth, orderResult, 
+              context.finalTotal, context.loyaltyData, context.setLoyaltyData
+            ),
+            PostOrderProcessor.processVoucherUsage(
+              context.appliedVoucher, context.tenantData?.id, TenantVoucherService
+            )
+          ]);
+          console.log('✅ Post-processing complete');
+        } catch (postError) {
+          console.error('⚠️ Post-processing error (non-critical):', postError);
+          // Continue anyway - order was created successfully
+        }
 
-        // 🚀 Step 6: Smart cleanup and redirect (replaces 20+ lines)
+        // Step 6: Smart cleanup and redirect
+        console.log('🧹 Cleaning up after order...');
         OrderCleanupUtilities.cleanupAfterOrder({
           clearOrder,
           setAppliedVoucher: context.setAppliedVoucher,
           setVoucherInput: context.setVoucherInput,
           setPointsToRedeem: context.setPointsToRedeem
         });
+        console.log('✅ Cleanup complete');
 
+        console.log('🏗️ Building redirect URL...');
         const queryParams = QueryParamsBuilder.buildOrderConfirmationParams(
           orderResult, context, customerInfo
         );
+        console.log('📝 Query params:', queryParams);
         
         const redirectUrl = OrderCleanupUtilities.buildRedirectUrl(
           context.tenantData?.slug, queryParams
         );
         
-        context.router.push(redirectUrl);
+        console.log('🚀 REDIRECT URL:', redirectUrl);
+        console.log('🚀 Using window.location.href to force navigation');
+        
+        // Use window.location.href for hard redirect (bypasses Dialog and Next.js router)
+        window.location.href = redirectUrl;
+        
+        console.log('✅ Redirect initiated successfully');
 
       } catch (error) {
-        console.error('Error placing order:', error);
+        console.error('❌ ERROR placing order:', error);
+        console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack');
         
         const errorType = error instanceof Error && error.message.includes('capacity') 
           ? 'order-capacity' 
@@ -198,6 +231,9 @@ export function createSuperOptimizedPlaceOrderHandler({
         
         const errorInfo = ValidationErrorMapper.mapValidationError(errorType);
         toast({ ...errorInfo, variant: 'destructive' });
+        
+        // Re-throw the error so the form handler can catch it
+        throw error;
       }
     })();
   };
