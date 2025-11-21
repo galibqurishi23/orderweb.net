@@ -23,7 +23,7 @@ export async function GET() {
           supportEmail: jsonSettings.supportEmail || 'support@dinedesk.com',
           supportPhone: jsonSettings.supportPhone || '+44 (0) 20 1234 5678',
           defaultCurrency: jsonSettings.defaultCurrency || 'GBP',
-          appLogo: jsonSettings.appLogo || '/icons/logo.svg',
+          appLogo: jsonSettings.appLogo || '/icons/login_logo.svg',
           primaryColor: jsonSettings.primaryColor || jsonSettings.defaultTheme?.primary || '#6366f1',
           secondaryColor: jsonSettings.secondaryColor || '#8b5cf6',
           accentColor: jsonSettings.accentColor || jsonSettings.defaultTheme?.accent || '#3b82f6'
@@ -61,7 +61,7 @@ function getDefaultSettings() {
     supportEmail: 'support@dinedesk.com',
     supportPhone: '+44 (0) 20 1234 5678',
     defaultCurrency: 'GBP',
-    appLogo: '/icons/logo.svg',
+    appLogo: '/icons/login_logo.svg',
     primaryColor: '#6366f1',
     secondaryColor: '#8b5cf6',
     accentColor: '#3b82f6'
@@ -133,7 +133,7 @@ export async function POST(request: NextRequest) {
       supportEmail: supportEmail || existingSettings.supportEmail,
       supportPhone: supportPhone || existingSettings.supportPhone,
       defaultCurrency: defaultCurrency || existingSettings.defaultCurrency || 'GBP',
-      appLogo: appLogo || existingSettings.appLogo || '/icons/logo.svg',
+      appLogo: appLogo || existingSettings.appLogo || '/icons/login_logo.svg',
       primaryColor: primaryColor || existingSettings.primaryColor,
       secondaryColor: secondaryColor || existingSettings.secondaryColor,
       accentColor: accentColor || existingSettings.accentColor,

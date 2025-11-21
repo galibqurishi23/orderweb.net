@@ -27,11 +27,24 @@ interface POSConfig {
   };
 }
 
+interface ConnectionStatus {
+  connected: boolean;
+  connectionCount: number;
+  status: 'connected' | 'disconnected' | 'error';
+  timestamp: string;
+  details?: {
+    tenant: string;
+    activeDevices: number;
+  };
+}
+
 export default function POSApiManagementPage({ params }: { params: { tenant: string } }) {
   const [config, setConfig] = useState<POSConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [currentApiKey, setCurrentApiKey] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus | null>(null);
+  const [checkingConnection, setCheckingConnection] = useState(false);
   const { toast } = useToast();
 
   const fetchConfig = async () => {
@@ -55,6 +68,34 @@ export default function POSApiManagementPage({ params }: { params: { tenant: str
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkConnectionStatus = async () => {
+    setCheckingConnection(true);
+    try {
+      const response = await fetch(`/api/tenant/${params.tenant}/pos-connection-status`);
+      const result = await response.json();
+      
+      if (result.success) {
+        setConnectionStatus(result);
+      } else {
+        setConnectionStatus({
+          connected: false,
+          connectionCount: 0,
+          status: 'error',
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch (error) {
+      setConnectionStatus({
+        connected: false,
+        connectionCount: 0,
+        status: 'error',
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      setCheckingConnection(false);
     }
   };
 
@@ -106,6 +147,14 @@ export default function POSApiManagementPage({ params }: { params: { tenant: str
 
   useEffect(() => {
     fetchConfig();
+    checkConnectionStatus();
+
+    // Poll connection status every 15 seconds
+    const intervalId = setInterval(() => {
+      checkConnectionStatus();
+    }, 15000);
+
+    return () => clearInterval(intervalId);
   }, [params.tenant]);
 
   if (loading) {
@@ -280,12 +329,69 @@ export default function POSApiManagementPage({ params }: { params: { tenant: str
             <div className="mb-6 p-4 bg-white border-2 rounded-lg">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-sm font-semibold text-gray-700">POS Status: Disconnected</span>
+                  {connectionStatus?.connected ? (
+                    <>
+                      <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-green-700">
+                          POS Status: Connected
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {connectionStatus.connectionCount} device{connectionStatus.connectionCount !== 1 ? 's' : ''} active
+                        </span>
+                      </div>
+                    </>
+                  ) : connectionStatus?.status === 'error' ? (
+                    <>
+                      <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-yellow-700">
+                          POS Status: Server Error
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          Cannot reach WebSocket server
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-gray-700">
+                          POS Status: Disconnected
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          No active connections
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
-                <Button variant="outline" size="sm">
-                  Test Connection
-                </Button>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">
+                    {connectionStatus?.timestamp && 
+                      `Updated ${new Date(connectionStatus.timestamp).toLocaleTimeString()}`
+                    }
+                  </span>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={checkConnectionStatus}
+                    disabled={checkingConnection}
+                  >
+                    {checkingConnection ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                        Checking...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3 h-3 mr-1" />
+                        Refresh
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
 

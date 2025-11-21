@@ -263,6 +263,9 @@ export default function DietaryCharacteristicsManager() {
     }
 
     try {
+      // Optimistically remove from UI immediately
+      setCharacteristics(prev => prev.filter(char => char.id !== id));
+      
       const response = await fetch(`/api/dietary-characteristics?id=${id}`, {
         method: 'DELETE'
       });
@@ -271,18 +274,30 @@ export default function DietaryCharacteristicsManager() {
 
       if (result.success) {
         setSuccess('Characteristic deleted successfully');
+        // Reload to ensure we're in sync with server
         await loadCharacteristics();
       } else {
         setError(result.error || 'Failed to delete characteristic');
+        // Reload to restore the item if deletion failed
+        await loadCharacteristics();
       }
     } catch (error) {
       setError('Network error occurred');
       console.error('Error:', error);
+      // Reload to restore the item if there was an error
+      await loadCharacteristics();
     }
   };
 
   const handleToggleActive = async (characteristic: DietaryCharacteristic) => {
     try {
+      // Optimistically update UI immediately
+      setCharacteristics(prev => prev.map(char => 
+        char.id === characteristic.id 
+          ? { ...char, is_active: !char.is_active }
+          : char
+      ));
+      
       const response = await fetch('/api/dietary-characteristics', {
         method: 'PUT',
         headers: {
@@ -297,9 +312,12 @@ export default function DietaryCharacteristicsManager() {
       const result = await response.json();
 
       if (result.success) {
+        // Reload to ensure we're in sync with server
         await loadCharacteristics();
       } else {
         setError(result.error || 'Failed to update status');
+        // Reload to restore the correct state
+        await loadCharacteristics();
       }
     } catch (error) {
       setError('Network error occurred');

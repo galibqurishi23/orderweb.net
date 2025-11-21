@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Mail, Send, Settings, Beaker, Users, FileText, MessageSquare, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
+import { Mail, Send, Settings, Beaker, Users, FileText, CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface EmailTemplate {
@@ -21,15 +21,7 @@ interface EmailTemplate {
   content: string;
 }
 
-interface EmailLog {
-  id: string;
-  timestamp: string;
-  to: string;
-  subject: string;
-  status: 'success' | 'failed' | 'pending';
-  messageId?: string;
-  error?: string;
-}
+
 
 interface SMTPSettings {
   enabled: boolean;
@@ -117,12 +109,9 @@ OrderWeb Team`
     }
   ]);
   
-  // Email Logs
-  const [emailLogs, setEmailLogs] = useState<EmailLog[]>([]);
-  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
 
   useEffect(() => {
-    fetchEmailLogs();
     fetchSmtpSettings();
   }, []);
 
@@ -186,20 +175,7 @@ OrderWeb Team`
     }
   };
 
-  const fetchEmailLogs = async () => {
-    setIsLoadingLogs(true);
-    try {
-      const response = await fetch('/api/super-admin/email-logs');
-      if (response.ok) {
-        const result = await response.json();
-        setEmailLogs(result.data || []);
-      }
-    } catch (error) {
-      console.error('Error fetching email logs:', error);
-    } finally {
-      setIsLoadingLogs(false);
-    }
-  };
+
 
   const handleSendManualEmail = async () => {
     if (!recipientEmail || !emailSubject || !emailContent) {
@@ -249,9 +225,6 @@ OrderWeb Team`
         setRecipientEmail('');
         setEmailSubject('');
         setEmailContent('');
-        
-        // Refresh email logs
-        fetchEmailLogs();
       } else {
         toast({
           title: "Error",
@@ -332,18 +305,7 @@ OrderWeb Team`
     });
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'success':
-        return <CheckCircle className="h-4 w-4 text-green-500" />;
-      case 'failed':
-        return <XCircle className="h-4 w-4 text-red-500" />;
-      case 'pending':
-        return <Clock className="h-4 w-4 text-yellow-500" />;
-      default:
-        return <Clock className="h-4 w-4 text-gray-400" />;
-    }
-  };
+
 
   return (
     <div className="space-y-6">
@@ -357,7 +319,7 @@ OrderWeb Team`
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="send" className="flex items-center gap-2">
             <Send className="h-4 w-4" />
             Send Email
@@ -373,10 +335,6 @@ OrderWeb Team`
           <TabsTrigger value="templates" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
             Templates
-          </TabsTrigger>
-          <TabsTrigger value="logs" className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4" />
-            Email Logs
           </TabsTrigger>
         </TabsList>
 
@@ -721,63 +679,7 @@ OrderWeb Team`
           </Card>
         </TabsContent>
 
-        <TabsContent value="logs" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquare className="h-5 w-5" />
-                Email Logs
-              </CardTitle>
-              <CardDescription>
-                Recent email activity and delivery status
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoadingLogs ? (
-                <div className="flex items-center justify-center py-8">
-                  <Clock className="h-6 w-6 animate-spin mr-2" />
-                  Loading email logs...
-                </div>
-              ) : emailLogs.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No email logs available yet. Send some emails to see them here.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {emailLogs.map((log) => (
-                    <div key={log.id} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        {getStatusIcon(log.status)}
-                        <div>
-                          <div className="font-medium">{log.subject}</div>
-                          <div className="text-sm text-muted-foreground">
-                            To: {log.to} • {log.timestamp}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={log.status === 'success' ? 'default' : log.status === 'failed' ? 'destructive' : 'secondary'}>
-                          {log.status}
-                        </Badge>
-                        {log.messageId && (
-                          <Badge variant="outline" className="text-xs">
-                            ID: {log.messageId.substring(0, 8)}...
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              
-              <div className="mt-4 pt-4 border-t">
-                <Button onClick={fetchEmailLogs} variant="outline" size="sm">
-                  Refresh Logs
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+
       </Tabs>
     </div>
   );

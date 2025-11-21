@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS pos_devices (
   last_heartbeat_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_pos_devices_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  INDEX idx_pos_devices_tenant (tenant_id),
+  INDEX idx_pos_devices_api_key (api_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Add indexes for performance

@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
       // Calculate reliability score (0-100)
       const reliabilityScore = device.total_orders_handled > 0
         ? Math.round(
-            (parseFloat(successRate) * 0.7) + // 70% weight on success rate
+            (parseFloat(String(successRate)) * 0.7) + // 70% weight on success rate
             (Math.min(device.avg_print_time ? 100 - device.avg_print_time : 100, 100) * 0.2) + // 20% on speed
             (device.minutes_since_last_seen <= 10 ? 10 : 0) // 10% on current status
           )

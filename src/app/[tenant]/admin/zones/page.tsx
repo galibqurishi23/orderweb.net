@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
 import { getCurrencySymbol } from '@/lib/currency-utils';
-import { MapPin, Edit, Trash2, Plus, Save, X, Upload, Clock } from 'lucide-react';
+import { MapPin, Edit, Trash2, Plus, Save, X, Upload, Clock, Search, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { useAdmin } from '@/context/AdminContext';
 import { useTenant } from '@/context/TenantContext';
 import type { DeliveryZone } from '@/lib/types';
@@ -20,7 +20,25 @@ const ZoneCard = ({ zone, onEdit, onDelete, currencySymbol }: {
     onEdit: (zone: DeliveryZone) => void; 
     onDelete: (zoneId: string) => void; 
     currencySymbol: string; 
-}) => (
+}) => {
+    const [showAllPostcodes, setShowAllPostcodes] = useState(false);
+    
+    // Group postcodes by area code
+    const groupedPostcodes = useMemo(() => {
+        if (!zone.postcodes || zone.postcodes.length === 0) return {};
+        
+        const groups: Record<string, string[]> = {};
+        zone.postcodes.forEach(pc => {
+            const areaCode = pc.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/)?.[1] || pc;
+            if (!groups[areaCode]) groups[areaCode] = [];
+            groups[areaCode].push(pc);
+        });
+        return groups;
+    }, [zone.postcodes]);
+
+    const totalGroups = Object.keys(groupedPostcodes).length;
+    
+    return (
     <Card className="flex flex-col hover:shadow-xl transition-shadow duration-300">
         <CardHeader>
             <div className="flex items-start justify-between">
@@ -98,31 +116,66 @@ const ZoneCard = ({ zone, onEdit, onDelete, currencySymbol }: {
                 </div>
             </div>
             
-            {/* Postcodes Display */}
+            {/* Postcodes Display - Improved with grouping */}
             <div className="pt-3 border-t">
-                <div className="text-sm font-medium text-muted-foreground mb-2">
-                    Postcodes ({zone.postcodes?.length || 0})
-                </div>
-                {zone.postcodes && zone.postcodes.length > 0 ? (
-                    <div className="flex flex-wrap gap-1">
-                        {zone.postcodes.slice(0, 6).map(postcode => (
-                            <Badge key={postcode} variant="outline" className="text-xs font-mono">
-                                {postcode}
-                            </Badge>
-                        ))}
-                        {zone.postcodes.length > 6 && (
-                            <Badge variant="outline" className="text-xs">
-                                +{zone.postcodes.length - 6} more
-                            </Badge>
-                        )}
+                <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-medium text-muted-foreground">
+                        Postcodes ({zone.postcodes?.length || 0})
                     </div>
+                    {totalGroups > 0 && (
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => setShowAllPostcodes(!showAllPostcodes)}
+                            className="h-6 text-xs"
+                        >
+                            {showAllPostcodes ? <ChevronUp className="w-3 h-3 mr-1" /> : <ChevronDown className="w-3 h-3 mr-1" />}
+                            {showAllPostcodes ? 'Show Less' : 'Show All'}
+                        </Button>
+                    )}
+                </div>
+                
+                {zone.postcodes && zone.postcodes.length > 0 ? (
+                    showAllPostcodes ? (
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {Object.entries(groupedPostcodes).map(([areaCode, postcodes]) => (
+                                <div key={areaCode} className="bg-muted/30 rounded p-2">
+                                    <div className="text-xs font-semibold text-muted-foreground mb-1">
+                                        {areaCode} ({postcodes.length})
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                        {postcodes.map(postcode => (
+                                            <Badge key={postcode} variant="outline" className="text-xs font-mono">
+                                                {postcode}
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="space-y-1">
+                            {Object.entries(groupedPostcodes).slice(0, 3).map(([areaCode, postcodes]) => (
+                                <div key={areaCode} className="text-xs">
+                                    <span className="font-mono font-semibold">{areaCode}</span>
+                                    <span className="text-muted-foreground"> ({postcodes.length} {postcodes.length === 1 ? 'postcode' : 'postcodes'})</span>
+                                </div>
+                            ))}
+                            {totalGroups > 3 && (
+                                <div className="text-xs text-muted-foreground">
+                                    +{totalGroups - 3} more areas
+                                </div>
+                            )}
+                        </div>
+                    )
                 ) : (
                     <span className="text-xs text-muted-foreground">No postcodes added</span>
                 )}
             </div>
         </CardContent>
     </Card>
-);
+    );
+};
 
 const ZoneFormDialog = ({ isOpen, onClose, onSave, zone, currencySymbol, allZones }: {
     isOpen: boolean;
@@ -134,6 +187,7 @@ const ZoneFormDialog = ({ isOpen, onClose, onSave, zone, currencySymbol, allZone
 }) => {
     const [formData, setFormData] = useState<Partial<DeliveryZone>>({});
     const [postcodeInput, setPostcodeInput] = useState('');
+    const [duplicateWarning, setDuplicateWarning] = useState<{ postcode: string; zoneName: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
 
@@ -156,15 +210,60 @@ const ZoneFormDialog = ({ isOpen, onClose, onSave, zone, currencySymbol, allZone
 
     if (!isOpen || !formData) return null;
 
+    const checkDuplicate = (postcode: string): { isDuplicate: boolean; zoneName?: string } => {
+        const normalizedPostcode = postcode.trim().toUpperCase();
+        for (const zone of allZones) {
+            // Skip checking current zone being edited
+            if (zone.id === formData.id) continue;
+            
+            if (zone.postcodes?.some(pc => pc.toUpperCase() === normalizedPostcode)) {
+                return { isDuplicate: true, zoneName: zone.name };
+            }
+        }
+        return { isDuplicate: false };
+    };
+
     const handlePostcodeAdd = () => {
         const newPostcode = postcodeInput.trim().toUpperCase();
-        if (newPostcode && !formData.postcodes?.includes(newPostcode)) {
-            setFormData({ 
-                ...formData, 
-                postcodes: [...(formData.postcodes || []), newPostcode] 
+        if (!newPostcode) return;
+        
+        if (formData.postcodes?.includes(newPostcode)) {
+            toast({ 
+                title: "Already Added", 
+                description: "This postcode is already in this zone.",
+                variant: "destructive"
             });
-            setPostcodeInput('');
+            return;
         }
+
+        // Check for duplicates in other zones
+        const duplicate = checkDuplicate(newPostcode);
+        if (duplicate.isDuplicate) {
+            setDuplicateWarning({ postcode: newPostcode, zoneName: duplicate.zoneName || '' });
+            return;
+        }
+
+        setFormData({ 
+            ...formData, 
+            postcodes: [...(formData.postcodes || []), newPostcode] 
+        });
+        setPostcodeInput('');
+    };
+
+    const handleAddDespiteDuplicate = () => {
+        if (!duplicateWarning) return;
+        
+        setFormData({ 
+            ...formData, 
+            postcodes: [...(formData.postcodes || []), duplicateWarning.postcode] 
+        });
+        setPostcodeInput('');
+        setDuplicateWarning(null);
+        
+        toast({
+            title: "Postcode Added",
+            description: "This postcode now exists in multiple zones. Higher priority zone will be used.",
+        });
     };
     
     const handlePostcodeRemove = (pc: string) => {
@@ -310,6 +409,38 @@ const ZoneFormDialog = ({ isOpen, onClose, onSave, zone, currencySymbol, allZone
                             </Button>
                         </div>
 
+                        {/* Duplicate Warning Dialog */}
+                        {duplicateWarning && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                                <div className="flex items-start gap-3">
+                                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                                    <div className="flex-1">
+                                        <h4 className="font-semibold text-amber-900 mb-1">Duplicate Postcode Warning</h4>
+                                        <p className="text-sm text-amber-800 mb-3">
+                                            <span className="font-mono font-bold">{duplicateWarning.postcode}</span> already exists in the <span className="font-semibold">"{duplicateWarning.zoneName}"</span> zone.
+                                        </p>
+                                        <div className="flex gap-2">
+                                            <Button 
+                                                size="sm" 
+                                                variant="outline" 
+                                                onClick={() => setDuplicateWarning(null)}
+                                                className="border-amber-300"
+                                            >
+                                                Cancel
+                                            </Button>
+                                            <Button 
+                                                size="sm" 
+                                                onClick={handleAddDespiteDuplicate}
+                                                className="bg-amber-600 hover:bg-amber-700"
+                                            >
+                                                Add Anyway
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* File Upload */}
                         <div className="flex gap-2">
                             <input
@@ -375,6 +506,8 @@ export default function DeliveryZonesPage() {
     const { tenantData: tenantDataFromTenant } = useTenant();
     const [editingZone, setEditingZone] = useState<DeliveryZone | null>(null);
     const [isFormOpen, setIsFormOpen] = useState(false);
+    const [searchPostcode, setSearchPostcode] = useState('');
+    const [searchResult, setSearchResult] = useState<{ found: boolean; zone?: DeliveryZone; message: string } | null>(null);
     const { toast } = useToast();
 
     // Force refresh zones when component mounts
@@ -387,6 +520,30 @@ export default function DeliveryZonesPage() {
     const currencySymbol = useMemo(() => {
         return getCurrencySymbol(tenantData?.settings?.currency || 'GBP');
     }, [tenantData?.settings?.currency]);
+
+    const handleSearchPostcode = () => {
+        const normalizedSearch = searchPostcode.trim().toUpperCase();
+        if (!normalizedSearch) {
+            setSearchResult(null);
+            return;
+        }
+
+        for (const zone of deliveryZones) {
+            if (zone.postcodes?.some(pc => pc.toUpperCase().includes(normalizedSearch) || normalizedSearch.includes(pc.toUpperCase()))) {
+                setSearchResult({
+                    found: true,
+                    zone,
+                    message: `Found in "${zone.name}" - Fee: ${zone.deliveryFee === 0 ? 'FREE' : `${currencySymbol}${zone.deliveryFee.toFixed(2)}`}, Min Order: ${currencySymbol}${zone.minOrder.toFixed(2)}, ETA: ${zone.deliveryTime} min`
+                });
+                return;
+            }
+        }
+
+        setSearchResult({
+            found: false,
+            message: `Postcode "${normalizedSearch}" is not covered by any delivery zone.`
+        });
+    };
 
     const handleAddNew = () => {
         setEditingZone(null);
@@ -474,7 +631,8 @@ export default function DeliveryZonesPage() {
     };
     
     return (
-        <div className="space-y-8">
+        <div className="space-y-6">
+            {/* Header Card */}
             <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
                     <div>
@@ -493,6 +651,89 @@ export default function DeliveryZonesPage() {
                 </CardHeader>
             </Card>
 
+            {/* Search Tool */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                        <Search className="w-5 h-5" />
+                        Check Postcode Coverage
+                    </CardTitle>
+                    <CardDescription>
+                        Search for a postcode to see which zone covers it and the delivery details.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex gap-3">
+                        <Input
+                            placeholder="Enter postcode (e.g., SE4 2PJ, SW1A 1AA)"
+                            value={searchPostcode}
+                            onChange={(e) => {
+                                setSearchPostcode(e.target.value.toUpperCase());
+                                setSearchResult(null);
+                            }}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSearchPostcode()}
+                            className="flex-1"
+                        />
+                        <Button onClick={handleSearchPostcode} disabled={!searchPostcode.trim()}>
+                            <Search className="w-4 h-4 mr-2"/>
+                            Search
+                        </Button>
+                    </div>
+
+                    {searchResult && (
+                        <div className={`mt-4 p-4 rounded-lg border ${
+                            searchResult.found 
+                                ? 'bg-green-50 border-green-200' 
+                                : 'bg-red-50 border-red-200'
+                        }`}>
+                            <div className="flex items-start gap-3">
+                                {searchResult.found ? (
+                                    <>
+                                        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                            <MapPin className="w-5 h-5 text-green-600" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <h4 className="font-semibold text-green-900 mb-1">✓ Covered</h4>
+                                            <p className="text-sm text-green-800">{searchResult.message}</p>
+                                            {searchResult.zone && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleEdit(searchResult.zone!)}
+                                                    className="mt-2 border-green-300 hover:bg-green-100"
+                                                >
+                                                    <Edit className="w-3 h-3 mr-1"/>
+                                                    Edit Zone
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                            <X className="w-5 h-5 text-red-600" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <h4 className="font-semibold text-red-900 mb-1">✗ Not Covered</h4>
+                                            <p className="text-sm text-red-800">{searchResult.message}</p>
+                                            <Button
+                                                size="sm"
+                                                onClick={handleAddNew}
+                                                className="mt-2 bg-red-600 hover:bg-red-700"
+                                            >
+                                                <Plus className="w-3 h-3 mr-1"/>
+                                                Add New Zone
+                                            </Button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Zones Grid */}
             {deliveryZones.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {deliveryZones.map(zone => (

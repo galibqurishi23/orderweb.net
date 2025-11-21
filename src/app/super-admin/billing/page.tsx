@@ -25,6 +25,8 @@ import {
   Send,
   Trash2
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 interface InvoiceLineItem {
   id: string;
@@ -55,6 +57,13 @@ interface Invoice {
   payment_method?: string;
   created_at: string;
   updated_at: string;
+  deleted_at?: string;
+  deleted_by?: string;
+  deletion_reason?: string;
+  paid_at?: string;
+  paid_by?: string;
+  archived?: boolean;
+  notes?: string;
 }
 
 const SUBSCRIPTION_PRICING = {
@@ -78,7 +87,10 @@ export default function BillingManagement() {
   const [isLoading, setIsLoading] = useState(false);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [archivedInvoices, setArchivedInvoices] = useState<Invoice[]>([]);
+  const [reportFilter, setReportFilter] = useState<'all' | 'paid' | 'deleted'>('all');
   const [selectedTenant, setSelectedTenant] = useState('');
+  const [deletingInvoiceId, setDeletingInvoiceId] = useState<string | null>(null);
   const [invoiceLineItems, setInvoiceLineItems] = useState<InvoiceLineItem[]>([
     { id: '1', description: '', amount: '' }
   ]);
@@ -154,7 +166,14 @@ export default function BillingManagement() {
       const response = await fetch('/api/super-admin/invoices');
       if (response.ok) {
         const data = await response.json();
-        setInvoices(data.invoices || []);
+        const allInvoices = data.invoices || [];
+        
+        // Separate active and archived invoices
+        const active = allInvoices.filter((inv: Invoice) => !inv.archived && !inv.deleted_at);
+        const archived = allInvoices.filter((inv: Invoice) => inv.archived || inv.deleted_at);
+        
+        setInvoices(active);
+        setArchivedInvoices(archived);
       }
     } catch (error) {
       console.error('Failed to load invoices:', error);
@@ -250,6 +269,18 @@ export default function BillingManagement() {
   };
 
   const updateInvoiceStatus = async (invoiceId: string, status: string, paymentMethod?: string) => {
+    // Optimistically update the invoice status in UI
+    const originalInvoices = [...invoices];
+    const newStatus = status as 'pending' | 'paid' | 'failed' | 'refunded';
+    
+    setInvoices(prevInvoices => 
+      prevInvoices.map(invoice => 
+        invoice.id === invoiceId 
+          ? { ...invoice, status: newStatus, payment_method: paymentMethod || invoice.payment_method }
+          : invoice
+      )
+    );
+
     try {
       const response = await fetch(`/api/super-admin/invoices/${invoiceId}`, {
         method: 'PUT',
@@ -264,12 +295,9 @@ export default function BillingManagement() {
       const result = await response.json();
       
       toast({
-        title: 'Invoice Updated',
+        title: '✅ Invoice Updated',
         description: result.message,
       });
-
-      // Refresh invoices list to update revenue calculations
-      await loadInvoices();
 
       // Show revenue update notification if marked as paid
       if (status === 'paid') {
@@ -283,11 +311,57 @@ export default function BillingManagement() {
       }
 
     } catch (error) {
+      // Rollback on error
+      setInvoices(originalInvoices);
+      
       toast({
         variant: 'destructive',
         title: 'Update Failed',
         description: error instanceof Error ? error.message : 'Failed to update invoice',
       });
+    }
+  };
+
+  const deleteInvoice = async (invoiceId: string, tenantName: string) => {
+    if (!confirm(`Are you sure you want to delete the invoice for ${tenantName}? This action cannot be undone.`)) {
+      return;
+    }
+
+    // Set loading state and optimistically remove invoice from UI
+    setDeletingInvoiceId(invoiceId);
+    const originalInvoices = [...invoices];
+    setInvoices(prevInvoices => prevInvoices.filter(invoice => invoice.id !== invoiceId));
+
+    try {
+      const response = await fetch(`/api/super-admin/invoices/${invoiceId}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete invoice');
+      }
+
+      const result = await response.json();
+      
+      // Show success message
+      toast({
+        title: '✅ Invoice Deleted',
+        description: result.message || `Invoice for ${tenantName} has been successfully deleted`,
+      });
+
+    } catch (error) {
+      console.error('Delete invoice error:', error);
+      
+      // Rollback: restore the original invoices on error
+      setInvoices(originalInvoices);
+      
+      toast({
+        variant: 'destructive',
+        title: 'Delete Failed',
+        description: error instanceof Error ? error.message : 'Failed to delete invoice',
+      });
+    } finally {
+      setDeletingInvoiceId(null);
     }
   };
 
@@ -369,9 +443,10 @@ export default function BillingManagement() {
     );
   };
 
-  const formatCurrency = (amount: number, currency: string) => {
-    // Handle NaN, null, undefined, or invalid numbers
-    const validAmount = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
+  const formatCurrency = (amount: number | string, currency: string) => {
+    // Convert string to number and handle NaN, null, undefined, or invalid numbers
+    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
+    const validAmount = typeof numAmount === 'number' && !isNaN(numAmount) ? numAmount : 0;
     
     return new Intl.NumberFormat('en-GB', {
       style: 'currency',
@@ -517,10 +592,11 @@ export default function BillingManagement() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="invoices">Invoice Management</TabsTrigger>
           <TabsTrigger value="generate">Generate New Invoice</TabsTrigger>
-          <TabsTrigger value="reports">Revenue Reports</TabsTrigger>
+          <TabsTrigger value="revenue">Revenue</TabsTrigger>
+          <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
         {/* Invoice Management Tab */}
@@ -600,6 +676,27 @@ export default function BillingManagement() {
                               Mark as Paid
                             </Button>
                           )}
+                          
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => deleteInvoice(invoice.id, invoice.tenant_name)}
+                            disabled={deletingInvoiceId === invoice.id}
+                            className="flex items-center gap-1 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50"
+                            title="Delete Invoice"
+                          >
+                            {deletingInvoiceId === invoice.id ? (
+                              <>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Deleting...
+                              </>
+                            ) : (
+                              <>
+                                <Trash2 className="h-3 w-3" />
+                                Delete
+                              </>
+                            )}
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -803,8 +900,8 @@ export default function BillingManagement() {
           </Card>
         </TabsContent>
 
-        {/* Revenue Reports Tab */}
-        <TabsContent value="reports" className="space-y-6">
+        {/* Revenue Tab */}
+        <TabsContent value="revenue" className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Revenue Summary Card */}
             <Card>
@@ -975,6 +1072,173 @@ export default function BillingManagement() {
                   <p className="text-sm text-purple-700 mt-2">vs monthly average</p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Reports Tab - Audit Trail & Archive */}
+        <TabsContent value="reports" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Invoice Reports & Audit Trail
+              </CardTitle>
+              <CardDescription>
+                Complete history of all invoice actions including payments and deletions
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {/* Filter Controls */}
+              <div className="mb-6 flex gap-2">
+                <Button
+                  variant={reportFilter === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setReportFilter('all')}
+                >
+                  All ({archivedInvoices.length})
+                </Button>
+                <Button
+                  variant={reportFilter === 'paid' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setReportFilter('paid')}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  <CheckCircle className="h-4 w-4 mr-1" />
+                  Paid ({archivedInvoices.filter(inv => inv.status === 'paid' && inv.paid_at).length})
+                </Button>
+                <Button
+                  variant={reportFilter === 'deleted' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setReportFilter('deleted')}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  <Trash2 className="h-4 w-4 mr-1" />
+                  Deleted ({archivedInvoices.filter(inv => inv.deleted_at).length})
+                </Button>
+              </div>
+
+              {/* Archived Invoices Table - Simple One Line Format */}
+              <div className="space-y-3">
+                {archivedInvoices
+                  .filter(invoice => {
+                    if (reportFilter === 'paid') return invoice.status === 'paid' && invoice.paid_at;
+                    if (reportFilter === 'deleted') return invoice.deleted_at;
+                    return true;
+                  })
+                  .map((invoice, index) => (
+                    <div 
+                      key={invoice.id} 
+                      className="flex items-center gap-4 p-4 border rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      {/* Number */}
+                      <div className="flex items-center gap-3 min-w-[120px]">
+                        <span className="font-semibold text-gray-700">#{index + 1}</span>
+                        <span className="text-sm text-gray-600">#{invoice.id.slice(0, 8)}</span>
+                      </div>
+
+                      {/* Restaurant Name */}
+                      <div className="flex-1 min-w-[200px]">
+                        <p className="font-medium text-gray-900">{invoice.tenant_name}</p>
+                      </div>
+
+                      {/* Date */}
+                      <div className="min-w-[130px] text-sm text-gray-600">
+                        {invoice.deleted_at 
+                          ? formatDate(invoice.deleted_at)
+                          : invoice.paid_at 
+                          ? formatDate(invoice.paid_at)
+                          : formatDate(invoice.created_at)
+                        }
+                      </div>
+
+                      {/* Amount */}
+                      <div className="min-w-[100px] font-semibold text-gray-900">
+                        {formatCurrency(invoice.amount, invoice.currency)}
+                      </div>
+
+                      {/* Status Badge */}
+                      <div className="min-w-[100px]">
+                        {invoice.deleted_at ? (
+                          <Badge className="bg-red-100 text-red-800">
+                            Deleted
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-green-100 text-green-800">
+                            Paid
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* Download Button */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => downloadInvoice(invoice.id)}
+                        className="min-w-[120px]"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Download
+                      </Button>
+                    </div>
+                  ))}
+
+                {archivedInvoices.filter(invoice => {
+                  if (reportFilter === 'paid') return invoice.status === 'paid' && invoice.paid_at;
+                  if (reportFilter === 'deleted') return invoice.deleted_at;
+                  return true;
+                }).length === 0 && (
+                  <div className="text-center py-12 text-gray-500">
+                    <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p className="text-lg font-medium">No archived invoices found</p>
+                    <p className="text-sm mt-2">
+                      {reportFilter === 'all' && 'Paid and deleted invoices will appear here'}
+                      {reportFilter === 'paid' && 'No paid invoices yet'}
+                      {reportFilter === 'deleted' && 'No deleted invoices'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Summary Stats */}
+              {archivedInvoices.length > 0 && (
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 pt-6 border-t">
+                  <div className="text-center p-4 bg-green-50 rounded-lg">
+                    <p className="text-2xl font-bold text-green-600">
+                      {formatCurrency(
+                        archivedInvoices
+                          .filter(inv => inv.status === 'paid' && inv.paid_at)
+                          .reduce((sum, inv) => sum + Number(inv.amount), 0),
+                        'GBP'
+                      )}
+                    </p>
+                    <p className="text-sm text-green-800 mt-1">Total Paid</p>
+                  </div>
+                  
+                  <div className="text-center p-4 bg-red-50 rounded-lg">
+                    <p className="text-2xl font-bold text-red-600">
+                      {formatCurrency(
+                        archivedInvoices
+                          .filter(inv => inv.deleted_at)
+                          .reduce((sum, inv) => sum + Number(inv.amount), 0),
+                        'GBP'
+                      )}
+                    </p>
+                    <p className="text-sm text-red-800 mt-1">Total Deleted</p>
+                  </div>
+                  
+                  <div className="text-center p-4 bg-blue-50 rounded-lg">
+                    <p className="text-2xl font-bold text-blue-600">
+                      {archivedInvoices.filter(inv => inv.status === 'paid' && inv.paid_at).length > 0
+                        ? ((archivedInvoices.filter(inv => inv.status === 'paid' && inv.paid_at).length / 
+                            (archivedInvoices.filter(inv => inv.status === 'paid' && inv.paid_at).length + 
+                             archivedInvoices.filter(inv => inv.deleted_at && inv.status !== 'paid').length)) * 100).toFixed(1)
+                        : 0}%
+                    </p>
+                    <p className="text-sm text-blue-800 mt-1">Success Rate</p>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

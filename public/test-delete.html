@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Delete Function</title>
+</head>
+<body>
+    <h1>Test Delete Function</h1>
+    <button id="deleteBtn">Test Delete Invoice</button>
+    <div id="output"></div>
+
+    <script>
+        // Simulate the delete function from the React component
+        const deleteInvoice = async (invoiceId, tenantName) => {
+            console.log('Delete invoice called:', invoiceId, tenantName);
+            
+            if (!confirm(`Are you sure you want to delete the invoice for ${tenantName}? This action cannot be undone.`)) {
+                console.log('Delete cancelled by user');
+                return;
+            }
+
+            console.log('Proceeding with delete...');
+            try {
+                console.log('Making DELETE request to:', `/api/super-admin/invoices/${invoiceId}`);
+                const response = await fetch(`https://orderweb.net/api/super-admin/invoices/${invoiceId}`, {
+                    method: 'DELETE'
+                });
+
+                console.log('Delete response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Delete failed with response:', errorText);
+                    throw new Error('Failed to delete invoice');
+                }
+
+                const result = await response.json();
+                console.log('Delete successful:', result);
+                
+                document.getElementById('output').innerHTML = `<p style="color: green;">Invoice deleted successfully: ${result.message}</p>`;
+
+            } catch (error) {
+                console.error('Delete error:', error);
+                document.getElementById('output').innerHTML = `<p style="color: red;">Delete failed: ${error.message}</p>`;
+            }
+        };
+
+        // Get a real invoice ID from the API
+        document.getElementById('deleteBtn').addEventListener('click', async () => {
+            try {
+                const response = await fetch('https://orderweb.net/api/super-admin/invoices');
+                const data = await response.json();
+                
+                if (data.invoices && data.invoices.length > 0) {
+                    const invoice = data.invoices[0];
+                    await deleteInvoice(invoice.id, invoice.tenant_name);
+                } else {
+                    document.getElementById('output').innerHTML = '<p style="color: orange;">No invoices found to delete</p>';
+                }
+            } catch (error) {
+                console.error('Failed to fetch invoices:', error);
+                document.getElementById('output').innerHTML = `<p style="color: red;">Failed to fetch invoices: ${error.message}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>

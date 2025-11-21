@@ -202,13 +202,13 @@ export async function GET(req: NextRequest) {
     // Performance insights
     const insights: string[] = [];
     
-    if (parseFloat(printSuccessRate) < 95) {
+    if (parseFloat(String(printSuccessRate)) < 95) {
       insights.push(`⚠️ Print success rate is ${printSuccessRate}% - investigate failures`);
     } else {
       insights.push(`✅ Excellent print success rate: ${printSuccessRate}%`);
     }
 
-    if (parseFloat(websocketSuccessRate) < 90) {
+    if (parseFloat(String(websocketSuccessRate)) < 90) {
       insights.push(`⚠️ WebSocket reliability concerns: ${websocketSuccessRate}% success`);
     }
 
@@ -222,7 +222,7 @@ export async function GET(req: NextRequest) {
       ? ((overallStats.total_failed / overallStats.total_orders) * 100).toFixed(2)
       : 0;
 
-    if (parseFloat(failureRate) > 2) {
+    if (parseFloat(String(failureRate)) > 2) {
       insights.push(`⚠️ High failure rate: ${failureRate}% - check common errors`);
     }
 

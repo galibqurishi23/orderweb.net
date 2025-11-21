@@ -53,18 +53,15 @@ function SuperAdminLayoutInner({
         <div className="flex-shrink-0 p-4 border-b border-gray-200">
           <div className="flex items-center space-x-3 mb-3">
             {/* Dynamic Logo Display */}
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center shadow-lg overflow-hidden flex-shrink-0">
-              {settings.appLogo && settings.appLogo !== '/icons/logo.svg' ? (
-                <Image 
-                  src={settings.appLogo} 
-                  alt={settings.appName || 'Super Admin'}
-                  width={40}
-                  height={40}
-                  className="object-contain rounded-lg"
-                />
-              ) : (
-                <Crown className="w-6 h-6 text-white" />
-              )}
+            <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
+              <Image 
+                src={settings.appLogo || '/icons/login_logo.svg'} 
+                alt={settings.appName || 'Super Admin'}
+                width={48}
+                height={48}
+                className="object-contain w-full h-full"
+                unoptimized
+              />
             </div>
             <div className="min-w-0 flex-1">
               <span className="text-lg font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent block truncate">

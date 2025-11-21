@@ -40,14 +40,39 @@ export async function PUT(
       );
     }
 
-    // Update invoice status
-    const updateQuery = `
-      UPDATE billing 
-      SET status = ?, payment_method = ?, updated_at = NOW()
-      WHERE id = ?
-    `;
+    // Get user info from headers for audit trail
+    const userEmail = request.headers.get('x-user-email') || 'system';
     
-    await db.execute(updateQuery, [status, paymentMethod || null, invoiceId]);
+    // Update invoice status with audit trail
+    let updateQuery: string;
+    let updateParams: any[];
+    
+    if (status === 'paid') {
+      // Mark as paid with timestamp and user tracking
+      updateQuery = `
+        UPDATE billing 
+        SET status = ?, 
+            payment_method = ?, 
+            paid_at = NOW(),
+            paid_by = ?,
+            archived = 1,
+            notes = CONCAT(COALESCE(notes, ''), '\n', 'Marked as paid by ', ?, ' on ', NOW()),
+            updated_at = NOW()
+        WHERE id = ?
+      `;
+      updateParams = [status, paymentMethod || null, userEmail, userEmail, invoiceId];
+    } else {
+      updateQuery = `
+        UPDATE billing 
+        SET status = ?, 
+            payment_method = ?, 
+            updated_at = NOW()
+        WHERE id = ?
+      `;
+      updateParams = [status, paymentMethod || null, invoiceId];
+    }
+    
+    await db.execute(updateQuery, updateParams);
 
     // If status is 'paid', update tenant subscription status
     if (status === 'paid') {
@@ -130,6 +155,65 @@ export async function GET(
     console.error('Get invoice error:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to fetch invoice' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ invoiceId: string }> }
+) {
+  try {
+    const params = await context.params;
+    const { invoiceId } = params;
+    
+    // Get deletion reason from request body
+    const body = await request.json().catch(() => ({}));
+    const reason = body.reason || 'No reason provided';
+    
+    // Get user info for audit trail
+    const userEmail = request.headers.get('x-user-email') || 'system';
+
+    // Check if invoice exists
+    const [existingRows] = await db.execute(
+      'SELECT id, status FROM billing WHERE id = ? AND deleted_at IS NULL',
+      [invoiceId]
+    );
+
+    const existingInvoices = existingRows as any[];
+    if (!existingInvoices || existingInvoices.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Invoice not found' },
+        { status: 404 }
+      );
+    }
+
+    // SOFT DELETE: Archive invoice instead of hard delete
+    // This preserves all invoice data for audit trail and reporting
+    await db.execute(
+      `UPDATE billing 
+       SET deleted_at = NOW(),
+           deleted_by = ?,
+           deletion_reason = ?,
+           archived = 1,
+           notes = CONCAT(COALESCE(notes, ''), '\n', 'Deleted by ', ?, ' on ', NOW(), ' - Reason: ', ?),
+           updated_at = NOW()
+       WHERE id = ?`,
+      [userEmail, reason, userEmail, reason, invoiceId]
+    );
+
+    console.log(`📝 Invoice ${invoiceId} archived (soft deleted) by ${userEmail}`);
+
+    return NextResponse.json({
+      success: true,
+      message: 'Invoice deleted and moved to reports'
+    });
+
+  } catch (error) {
+    console.error('Delete invoice error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to delete invoice' },
       { status: 500 }
     );
   }

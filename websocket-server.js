@@ -255,7 +255,71 @@ module.exports = {
 // Only start standalone server if run directly
 if (require.main === module) {
   const PORT = process.env.WS_PORT || 9011;
-  const server = http.createServer();
+  
+  // Create HTTP server with broadcast endpoint
+  const server = http.createServer((req, res) => {
+    // Health check endpoint
+    if (req.url === '/health' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        status: 'ok', 
+        service: 'WebSocket Server',
+        connections: Array.from(connections.keys()).map(tenant => ({
+          tenant,
+          count: connections.get(tenant)?.size || 0
+        })),
+        timestamp: new Date().toISOString()
+      }));
+      return;
+    }
+    
+    // Broadcast endpoint for triggering WebSocket events
+    if (req.url === '/broadcast' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', () => {
+        try {
+          const { tenant, event } = JSON.parse(body);
+          
+          if (!tenant || !event) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+              success: false, 
+              error: 'Missing tenant or event' 
+            }));
+            return;
+          }
+          
+          // Broadcast to all connected clients for this tenant
+          broadcastToTenant(tenant, event);
+          
+          console.log(`[Broadcast] Event "${event.type}" sent to tenant: ${tenant}`);
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: true, 
+            message: `Event broadcasted to ${tenant}`,
+            connections: connections.get(tenant)?.size || 0
+          }));
+        } catch (error) {
+          console.error('[Broadcast] Error:', error.message);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: false, 
+            error: error.message 
+          }));
+        }
+      });
+      return;
+    }
+    
+    // Default response for unknown routes
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  });
   
   createWebSocketServer(server);
   
@@ -263,5 +327,6 @@ if (require.main === module) {
     console.log(`[Server] WebSocket server running on port ${PORT}`);
     console.log(`[Server] Connect using: ws://localhost:${PORT}/ws/pos/{tenant}`);
     console.log(`[Server] Production: wss://orderweb.net/ws/pos/{tenant}`);
+    console.log(`[Server] Broadcast endpoint: http://localhost:${PORT}/broadcast`);
   });
 }

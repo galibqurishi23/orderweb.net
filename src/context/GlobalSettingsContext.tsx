@@ -20,7 +20,7 @@ export interface GlobalSettings {
 // Default Settings
 const defaultSettings: GlobalSettings = {
   appName: 'OrderWeb',
-  appLogo: '/icons/logo.svg',
+  appLogo: '/icons/login_logo.svg',
   appDescription: 'Modern restaurant ordering and management system',
   primaryColor: '#2563eb',
   secondaryColor: '#64748b',
@@ -52,7 +52,7 @@ export function GlobalSettingsProvider({ children }: { children: ReactNode }) {
   const refreshSettings = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/super-admin/settings');
+      const response = await fetch('/api/platform/settings');
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.settings) {

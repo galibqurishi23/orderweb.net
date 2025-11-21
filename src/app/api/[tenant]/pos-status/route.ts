@@ -30,7 +30,7 @@ async function validateApiKey(tenant: string, apiKey: string | null): Promise<bo
 function getConnectionStats(tenant: string) {
   try {
     // Import websocket-broadcaster to get connection stats
-    const { getConnectionStats } = require('../../../../../lib/websocket-broadcaster');
+    const { getConnectionStats } = require('../../../../lib/websocket-broadcaster');
     return getConnectionStats(tenant);
   } catch (error) {
     console.error('Error getting connection stats:', error);

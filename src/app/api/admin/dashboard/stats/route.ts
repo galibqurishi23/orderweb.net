@@ -163,7 +163,7 @@ export async function GET(req: NextRequest) {
       unprinted_old: orderStats.pending_orders + orderStats.sent_to_pos_orders,
       devices_offline: deviceStats.offline_devices,
       failed_prints: orderStats.failed_orders,
-      low_websocket_rate: parseFloat(websocketSuccessRate) < 90
+      low_websocket_rate: parseFloat(String(websocketSuccessRate)) < 90
     };
 
     const alertCount = Object.values(criticalAlerts).filter(v => v > 0 || v === true).length;

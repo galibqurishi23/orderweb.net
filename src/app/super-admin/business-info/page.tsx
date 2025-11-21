@@ -72,7 +72,7 @@ export default function BusinessInfo() {
 
   // Update logo preview when globalSettings change
   useEffect(() => {
-    if (globalSettings.appLogo && globalSettings.appLogo !== '/icons/logo.svg') {
+    if (globalSettings.appLogo && globalSettings.appLogo !== '/icons/login_logo.svg') {
       setLogoPreview(globalSettings.appLogo);
     }
   }, [globalSettings.appLogo]);
@@ -220,8 +220,12 @@ export default function BusinessInfo() {
           companyAddress: finalSettings.companyAddress
         });
 
+        // Refresh global settings from database to ensure consistency
+        await refreshSettings();
+
         setSettings(finalSettings);
         setLogoFile(null);
+        setLogoPreview(''); // Clear the preview after successful save
 
         toast({
           title: 'Success',
@@ -247,7 +251,7 @@ export default function BusinessInfo() {
     setLogoPreview('');
     setSettings(prev => ({
       ...prev,
-      appLogo: '/icons/logo.svg'
+      appLogo: '/icons/login_logo.svg'
     }));
   };
 
@@ -332,6 +336,120 @@ export default function BusinessInfo() {
                 </div>
               </div>
 
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Upload className="w-5 h-5" />
+                Platform Logo
+              </CardTitle>
+              <CardDescription>
+                Upload and manage your platform's logo. This will appear across all customer-facing interfaces.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Current Logo Preview */}
+                <div className="space-y-4">
+                  <Label>Current Logo</Label>
+                  <div className="relative w-full h-40 bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg flex items-center justify-center overflow-hidden">
+                    {(logoPreview || (settings.appLogo && settings.appLogo !== '/icons/login_logo.svg')) ? (
+                      <div className="relative w-full h-full flex items-center justify-center p-4">
+                        <Image
+                          src={logoPreview || settings.appLogo}
+                          alt="Platform Logo"
+                          width={200}
+                          height={100}
+                          className="max-w-full max-h-full object-contain"
+                          unoptimized
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Building className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                        <p className="text-gray-500 text-sm">No logo uploaded</p>
+                        <p className="text-gray-400 text-xs">Using default logo</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {(logoPreview || (settings.appLogo && settings.appLogo !== '/icons/login_logo.svg')) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={resetLogo}
+                      className="w-full flex items-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Reset to Default
+                    </Button>
+                  )}
+                </div>
+
+                {/* Logo Upload Section */}
+                <div className="space-y-4">
+                  <Label>Upload New Logo</Label>
+                  <div
+                    className="relative w-full h-40 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <div className="text-center">
+                      <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-gray-600 text-sm font-medium">
+                        Click to upload logo
+                      </p>
+                      <p className="text-gray-400 text-xs mt-1">
+                        PNG, JPG, GIF, WebP up to 5MB
+                      </p>
+                    </div>
+                  </div>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    className="hidden"
+                  />
+
+                  {logoFile && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="w-4 h-4 text-blue-600" />
+                          <span className="text-sm text-blue-800 font-medium">
+                            New logo selected
+                          </span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setLogoFile(null);
+                            setLogoPreview('');
+                          }}
+                          className="text-blue-600 hover:text-blue-700 h-auto p-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-blue-600 mt-1">
+                        {logoFile.name} ({(logoFile.size / 1024 / 1024).toFixed(2)} MB)
+                      </p>
+                    </div>
+                  )}
+
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      For best results, use a logo with a transparent background and a 3:1 aspect ratio (e.g., 300x100px). 
+                      The logo will be automatically resized to fit different screen sizes.
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              </div>
             </CardContent>
           </Card>
 

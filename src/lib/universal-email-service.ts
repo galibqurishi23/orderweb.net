@@ -139,12 +139,13 @@ class UniversalEmailService {
     }
   }
 
-  async sendEmail(to: string, subject: string, html: string): Promise<{ success: boolean; messageId?: string }> {
+  async sendEmail(to: string, subject: string, html: string, attachments?: any[]): Promise<{ success: boolean; messageId?: string }> {
     try {
       console.log('🔍 DEBUG: sendEmail called with:', {
         to,
         subject,
-        htmlLength: html.length
+        htmlLength: html.length,
+        hasAttachments: !!attachments && attachments.length > 0
       });
 
       if (!this.transporter) {
@@ -157,7 +158,7 @@ class UniversalEmailService {
 
       console.log('✅ Email transporter is available');
 
-      const mailOptions = {
+      const mailOptions: any = {
         from: {
           name: process.env.SMTP_FROM || 'Order Web POS',
           address: process.env.SMTP_USER || 'noreply@orderweb.com'
@@ -167,6 +168,11 @@ class UniversalEmailService {
         subject,
         html,
       };
+
+      // Add attachments if provided
+      if (attachments && attachments.length > 0) {
+        mailOptions.attachments = attachments;
+      }
 
       console.log('📧 Mail options prepared:', {
         from: mailOptions.from,

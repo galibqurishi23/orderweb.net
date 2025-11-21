@@ -14,7 +14,7 @@ export async function GET() {
       success: true,
       data: settings || {
         appName: 'OrderWeb',
-        appLogo: '/icons/logo.svg',
+        appLogo: '/icons/login_logo.svg',
         appDescription: 'Modern restaurant ordering and management system',
         defaultCurrency: 'GBP',
         supportEmail: 'support@orderweb.com',

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import db from '@/lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { emailService } from '@/lib/universal-email-service';
 
 // GET - List all invoices
 export async function GET(request: NextRequest) {
   try {
-    const invoices = await query(`
+    const [invoices] = await db.execute(`
       SELECT 
         b.*,
         t.name as tenant_name,
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       LEFT JOIN tenants t ON b.tenant_id = t.id
       ORDER BY b.created_at DESC
       LIMIT 100
-    `);
+    `) as [any[], any];
 
     return NextResponse.json({ 
       invoices: invoices || [],
@@ -64,31 +64,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Get tenant details
-    const tenantResult = await query(
-      'SELECT * FROM tenants WHERE id = ?',
+    const [tenantRows] = await db.execute(
+      `SELECT name FROM tenants WHERE id = ?`,
       [tenantId]
-    );
+    ) as [any[], any];
 
-    if (!tenantResult || tenantResult.length === 0) {
+    if (!tenantRows || tenantRows.length === 0) {
       return NextResponse.json(
         { error: 'Tenant not found', success: false },
         { status: 404 }
       );
     }
 
-    const tenant = tenantResult[0];
+    const tenant = tenantRows[0];
 
     // Generate invoice ID
     const invoiceId = uuidv4();
     const invoiceNumber = `INV-${Date.now()}`;
 
-    // Calculate dates
-    const startDate = billingPeriodStart || new Date().toISOString().split('T')[0];
-    const endDate = billingPeriodEnd || (() => {
-      const end = new Date(startDate);
-      end.setDate(end.getDate() + 30);
-      return end.toISOString().split('T')[0];
-    })();
+    // Calculate dates (full datetime format for database)
+    const startDate = billingPeriodStart ? new Date(billingPeriodStart).toISOString().slice(0, 19).replace('T', ' ') 
+                      : new Date().toISOString().slice(0, 19).replace('T', ' ');
+    
+    const endDate = billingPeriodEnd ? new Date(billingPeriodEnd).toISOString().slice(0, 19).replace('T', ' ')
+                    : (() => {
+                        const end = new Date();
+                        end.setDate(end.getDate() + 30);
+                        return end.toISOString().slice(0, 19).replace('T', ' ');
+                      })();
 
     // Calculate due date (30 days from now)
     const dueDate = new Date();
@@ -108,58 +111,60 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Insert invoice into database
-    await query(
-      `INSERT INTO billing (
-        id, 
-        tenant_id,
-        invoice_number, 
-        subscription_plan, 
-        amount, 
-        currency,
-        billing_period_start,
-        billing_period_end,
-        due_date,
-        status,
-        description,
-        is_custom_invoice,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [
-        invoiceId,
-        tenantId,
-        invoiceNumber,
-        subscriptionPlan || 'starter',
-        invoiceAmount,
-        currency,
-        startDate,
-        endDate,
-        dueDateStr,
-        'pending',
-        invoiceDescription,
-        isCustomInvoice ? 1 : 0
-      ]
-    );
+    // Insert invoice into database - use compatible format with existing table
+    try {
+      await db.execute(
+        `INSERT INTO billing (
+          id, 
+          tenant_id,
+          subscription_plan, 
+          amount, 
+          currency,
+          billing_period_start,
+          billing_period_end,
+          status,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 30 DAY), ?, NOW())`,
+        [
+          invoiceId,
+          tenantId,
+          subscriptionPlan || 'starter',
+          invoiceAmount,
+          currency,
+          'pending'
+        ]
+      );
+      
+      console.log(`✅ Invoice ${invoiceNumber} created successfully`);
+    } catch (error) {
+      console.error('Invoice insert error:', error);
+      throw error;
+    }
 
-    // If custom invoice with line items, store them
+    // Store line items in separate table if available
     if (isCustomInvoice && lineItems && lineItems.length > 0) {
       for (const item of lineItems) {
         if (item.description && item.amount) {
-          await query(
-            `INSERT INTO invoice_line_items (
-              id,
-              invoice_id,
-              description,
-              amount,
-              created_at
-            ) VALUES (?, ?, ?, ?, NOW())`,
-            [
-              uuidv4(),
-              invoiceId,
-              item.description,
-              parseFloat(item.amount)
-            ]
-          );
+          try {
+            await db.execute(
+              `INSERT INTO invoice_line_items (
+                id,
+                invoice_id,
+                description,
+                amount,
+                created_at
+              ) VALUES (?, ?, ?, ?, NOW())`,
+              [
+                uuidv4(),
+                invoiceId,
+                item.description,
+                parseFloat(item.amount)
+              ]
+            );
+          } catch (error) {
+            console.warn('Failed to insert line item:', error);
+            // Continue with invoice creation even if line items fail
+          }
         }
       }
     }
@@ -178,11 +183,11 @@ export async function POST(request: NextRequest) {
         lineItems: isCustomInvoice ? lineItems : []
       });
 
-      await emailService.sendEmail({
-        to: tenant.email,
-        subject: `New Invoice ${invoiceNumber} - Order Web POS`,
-        html: emailHtml
-      });
+      await emailService.sendEmail(
+        tenant.email,
+        `New Invoice ${invoiceNumber} - Order Web POS`,
+        emailHtml
+      );
 
       console.log(`✅ Invoice email sent to ${tenant.email}`);
     } catch (emailError) {
@@ -191,21 +196,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch the created invoice with tenant details
-    const createdInvoice = await query(
+    const [createdInvoiceRows] = await db.execute(
       `SELECT 
-        b.*,
+        b.*, 
         t.name as tenant_name,
         t.email as tenant_email
       FROM billing b
       LEFT JOIN tenants t ON b.tenant_id = t.id
       WHERE b.id = ?`,
       [invoiceId]
-    );
-
+    ) as [any[], any];
+    
     return NextResponse.json({
       success: true,
       message: 'Invoice created successfully',
-      invoice: createdInvoice[0]
+      invoice: createdInvoiceRows[0]
     });
 
   } catch (error) {

@@ -70,17 +70,6 @@ interface SystemStatus {
   databaseError?: string;
 }
 
-interface SMTPSettings {
-  enabled: boolean;
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  password: string;
-  from: string;
-  testEmail: string;
-}
-
 interface StripeSettings {
   publishableKey: string;
   secretKey: string;
@@ -105,7 +94,7 @@ export default function SuperAdminSettings() {
   
   const [settings, setSettings] = useState<ApplicationSettings>({
     appName: 'OrderWeb',
-    appLogo: '/icons/logo.svg',
+    appLogo: '/icons/login_logo.svg',
     appDescription: 'Modern restaurant ordering and management system',
     defaultCurrency: 'GBP',
     supportEmail: 'support@orderweb.com',
@@ -134,17 +123,6 @@ export default function SuperAdminSettings() {
     databaseError: undefined,
   });
 
-  const [smtpSettings, setSmtpSettings] = useState<SMTPSettings>({
-    enabled: false,
-    host: '',
-    port: 587,
-    secure: false,
-    user: '',
-    password: '',
-    from: '',
-    testEmail: '',
-  });
-
   const [stripeSettings, setStripeSettings] = useState<StripeSettings>({
     publishableKey: '',
     secretKey: '',
@@ -152,13 +130,11 @@ export default function SuperAdminSettings() {
     webhookSecret: '',
   });
 
-  const [isTestingEmail, setIsTestingEmail] = useState(false);
   const [isTestingStripe, setIsTestingStripe] = useState(false);
 
   useEffect(() => {
     loadSettings();
     loadSystemStatus();
-    loadSmtpSettings();
     loadStripeSettings();
   }, []);
 
@@ -203,98 +179,6 @@ export default function SuperAdminSettings() {
       }
     } catch (error) {
       console.error('Failed to load system status:', error);
-    }
-  };
-
-  const loadSmtpSettings = async () => {
-    try {
-      const response = await fetch('/api/super-admin/smtp-settings');
-      if (response.ok) {
-        const data = await response.json();
-        // Ensure all values are defined (not undefined)
-        setSmtpSettings({
-          enabled: data.enabled || false,
-          host: data.host || '',
-          port: data.port || 587,
-          secure: data.secure || false,
-          user: data.user || '',
-          password: data.password || '',
-          from: data.from || '',
-          testEmail: data.testEmail || '',
-        });
-      }
-    } catch (error) {
-      console.error('Failed to load SMTP settings:', error);
-    }
-  };
-
-  const saveSmtpSettings = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch('/api/super-admin/smtp-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(smtpSettings)
-      });
-
-      if (response.ok) {
-        toast({
-          title: 'SMTP Settings Saved',
-          description: 'Email configuration has been updated successfully',
-        });
-        loadSystemStatus(); // Refresh email service status
-      } else {
-        throw new Error('Failed to save SMTP settings');
-      }
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Save Failed',
-        description: error instanceof Error ? error.message : 'Failed to save SMTP settings',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const testEmailConnection = async () => {
-    if (!smtpSettings.testEmail) {
-      toast({
-        variant: 'destructive',
-        title: 'Test Email Required',
-        description: 'Please enter a test email address',
-      });
-      return;
-    }
-
-    setIsTestingEmail(true);
-    try {
-      const response = await fetch('/api/super-admin/test-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          ...smtpSettings,
-          testEmail: smtpSettings.testEmail 
-        })
-      });
-
-      if (response.ok) {
-        toast({
-          title: 'Test Email Sent',
-          description: `Test email sent successfully to ${smtpSettings.testEmail}`,
-        });
-      } else {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to send test email');
-      }
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Test Failed',
-        description: error instanceof Error ? error.message : 'Failed to send test email',
-      });
-    } finally {
-      setIsTestingEmail(false);
     }
   };
 
@@ -542,19 +426,15 @@ export default function SuperAdminSettings() {
           Super Admin Settings
         </h1>
         <p className="text-gray-600 mt-2">
-          Configure technical settings, payments, SMTP, security, and system preferences
+          Configure technical settings, payments, security, and system preferences
         </p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="payments" className="flex items-center gap-2">
             <Key className="h-4 w-4" />
             Payments
-          </TabsTrigger>
-          <TabsTrigger value="smtp" className="flex items-center gap-2">
-            <Mail className="h-4 w-4" />
-            SMTP
           </TabsTrigger>
           <TabsTrigger value="system" className="flex items-center gap-2">
             <Server className="h-4 w-4" />
@@ -745,170 +625,6 @@ export default function SuperAdminSettings() {
                     </AlertDescription>
                   </Alert>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* SMTP Settings */}
-        <TabsContent value="smtp" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Mail className="h-5 w-5" />
-                SMTP Configuration
-              </CardTitle>
-              <CardDescription>
-                Configure email server settings for sending notifications and system emails
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <h3 className="font-medium">Enable Email Service</h3>
-                  <p className="text-sm text-gray-500">Turn on/off email functionality for the system</p>
-                </div>
-                <Switch
-                  checked={smtpSettings.enabled}
-                  onCheckedChange={(checked) => setSmtpSettings(prev => ({ ...prev, enabled: checked }))}
-                />
-              </div>
-
-              {smtpSettings.enabled && (
-                <div className="space-y-6">
-                  {/* SMTP Server Configuration */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="smtpHost">SMTP Host</Label>
-                      <Input
-                        id="smtpHost"
-                        placeholder="smtp.gmail.com"
-                        value={smtpSettings.host || ''}
-                        onChange={(e) => setSmtpSettings(prev => ({ ...prev, host: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="smtpPort">SMTP Port</Label>
-                      <Input
-                        id="smtpPort"
-                        type="number"
-                        placeholder="587"
-                        value={smtpSettings.port || 587}
-                        onChange={(e) => setSmtpSettings(prev => ({ ...prev, port: parseInt(e.target.value) || 587 }))}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="smtpUser">SMTP Username</Label>
-                    <Input
-                      id="smtpUser"
-                      placeholder="your-email@gmail.com"
-                      value={smtpSettings.user || ''}
-                      onChange={(e) => setSmtpSettings(prev => ({ ...prev, user: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="smtpPassword">SMTP Password</Label>
-                    <Input
-                      id="smtpPassword"
-                      type="password"
-                      placeholder="Your email password or app password"
-                      value={smtpSettings.password || ''}
-                      onChange={(e) => setSmtpSettings(prev => ({ ...prev, password: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="smtpFrom">From Email Address</Label>
-                    <Input
-                      id="smtpFrom"
-                      placeholder="noreply@yourapp.com"
-                      value={smtpSettings.from || ''}
-                      onChange={(e) => setSmtpSettings(prev => ({ ...prev, from: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 border rounded-lg">
-                    <div>
-                      <h3 className="font-medium">Use SSL/TLS</h3>
-                      <p className="text-sm text-gray-500">Enable secure connection (recommended for port 465)</p>
-                    </div>
-                    <Switch
-                      checked={smtpSettings.secure}
-                      onCheckedChange={(checked) => setSmtpSettings(prev => ({ ...prev, secure: checked }))}
-                    />
-                  </div>
-
-                  {/* Test Email Section */}
-                  <div className="border-t pt-6">
-                    <h3 className="text-lg font-medium mb-4">Test Email Configuration</h3>
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <Label htmlFor="testEmail">Test Email Address</Label>
-                        <Input
-                          id="testEmail"
-                          type="email"
-                          placeholder="test@example.com"
-                          value={smtpSettings.testEmail || ''}
-                          onChange={(e) => setSmtpSettings(prev => ({ ...prev, testEmail: e.target.value }))}
-                        />
-                      </div>
-                      <div className="flex items-end">
-                        <Button
-                          onClick={testEmailConnection}
-                          disabled={isTestingEmail || !smtpSettings.testEmail}
-                          className="flex items-center gap-2"
-                        >
-                          {isTestingEmail ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Testing...
-                            </>
-                          ) : (
-                            <>
-                              <Mail className="h-4 w-4" />
-                              Send Test
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SMTP Configuration Tips */}
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      <strong>Common SMTP Settings:</strong><br />
-                      • Gmail: smtp.gmail.com, Port 587 (TLS) or 465 (SSL)<br />
-                      • Outlook: smtp-mail.outlook.com, Port 587 (TLS)<br />
-                      • Yahoo: smtp.mail.yahoo.com, Port 587 (TLS)<br />
-                      • For Gmail, use App Password instead of regular password
-                    </AlertDescription>
-                  </Alert>
-                </div>
-              )}
-
-              <div className="flex gap-4">
-                <Button 
-                  onClick={saveSmtpSettings}
-                  disabled={isLoading}
-                  className="flex items-center gap-2"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4" />
-                      Save SMTP Settings
-                    </>
-                  )}
-                </Button>
               </div>
             </CardContent>
           </Card>
