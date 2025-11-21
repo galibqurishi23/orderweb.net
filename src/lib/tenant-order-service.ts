@@ -324,8 +324,9 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
                 id, tenant_id, orderNumber, createdAt, customerName, customerPhone, customerEmail, 
                 address, total, status, orderType, isAdvanceOrder, scheduledTime,
                 subtotal, deliveryFee, discount, tax, voucherCode, printed, customerId, paymentMethod, specialInstructions,
-                vat_info, total_vat_amount, has_mixed_items, hmrc_compliant
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                vat_info, total_vat_amount, has_mixed_items, hmrc_compliant,
+                print_status, websocket_sent
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 orderId, tenantId, orderNumber, createdAt, orderData.customerName, orderData.customerPhone,
                 orderData.customerEmail || null, orderData.address, orderData.total, 'confirmed',
@@ -337,7 +338,10 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
                 JSON.stringify(enrichedOrder.vatInfo || {}),
                 enrichedOrder.vatInfo?.totalVAT || 0,
                 enrichedOrder.vatInfo?.hasMixedItems || false,
-                enrichedOrder.vatInfo?.hmrcCompliant || true
+                enrichedOrder.vatInfo?.hmrcCompliant || true,
+                // Print status tracking
+                'pending', // Initial status - order created but not yet sent to POS
+                false // WebSocket not sent yet
             ]
         );
         console.log('✅ Order inserted successfully with VAT information');
@@ -447,6 +451,7 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
     console.log('✅ Order created successfully and ready for POS pickup:', orderId);
     
     // WebSocket broadcast for real-time POS notification (online orders only)
+    let websocketSuccess = false;
     try {
         // Get tenant slug for WebSocket broadcast
         const [tenantRows] = await pool.execute(
@@ -482,15 +487,32 @@ export async function createTenantOrder(tenantId: string, orderData: Omit<Order,
                 createdAt: createdAt.toISOString()
             };
             
-            // Broadcast to all connected POS systems for this tenant (fire-and-forget)
-            broadcastNewOrder(tenantSlug, orderForBroadcast).catch(err => {
-                console.error('⚠️ WebSocket broadcast failed (non-critical):', err);
-            });
-            console.log('✅ WebSocket broadcast initiated for order:', orderNumber);
+            // Broadcast to all connected POS systems for this tenant
+            await broadcastNewOrder(tenantSlug, orderForBroadcast);
+            websocketSuccess = true;
+            console.log('✅ WebSocket broadcast sent for order:', orderNumber);
         }
     } catch (wsError) {
         // Don't fail the order if WebSocket broadcast fails
         console.error('⚠️ Error broadcasting order via WebSocket:', wsError);
+    }
+    
+    // Update order with WebSocket status
+    if (websocketSuccess) {
+        try {
+            await pool.execute(
+                `UPDATE orders 
+                 SET print_status = 'sent_to_pos',
+                     websocket_sent = TRUE,
+                     websocket_sent_at = NOW(),
+                     print_status_updated_at = NOW()
+                 WHERE id = ?`,
+                [orderId]
+            );
+            console.log('✅ Order print_status updated to sent_to_pos:', orderNumber);
+        } catch (updateError) {
+            console.error('⚠️ Failed to update WebSocket status:', updateError);
+        }
     }
     
     // Return order details for confirmation page

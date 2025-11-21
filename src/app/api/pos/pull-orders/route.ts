@@ -39,30 +39,69 @@ export async function GET(request: NextRequest) {
 
     console.log('🔍 Pull Orders API called:', { tenantSlug, status, limit, since });
     
-    // Verify tenant and API key
-    const [tenantRows] = await db.execute(
-      'SELECT id, name, slug FROM tenants WHERE slug = ? AND pos_api_key = ?',
-      [tenantSlug, apiKey]
+    // Try device-level authentication first (new system)
+    let tenant: any = null;
+    let deviceId: string | null = null;
+    
+    const [deviceRows] = await db.execute(
+      `SELECT d.*, t.id as tenant_id, t.name as tenant_name, t.slug as tenant_slug 
+       FROM pos_devices d
+       JOIN tenants t ON d.tenant_id = t.id
+       WHERE d.api_key = ? AND d.is_active = TRUE AND t.slug = ?`,
+      [apiKey, tenantSlug]
     );
 
-    if (!Array.isArray(tenantRows) || tenantRows.length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid tenant or API key' },
-        { status: 401 }
+    if (Array.isArray(deviceRows) && deviceRows.length > 0) {
+      // Device-level authentication successful
+      const device = deviceRows[0] as any;
+      tenant = {
+        id: device.tenant_id,
+        name: device.tenant_name,
+        slug: device.tenant_slug
+      };
+      deviceId = device.device_id;
+      
+      // Update last_seen_at for device heartbeat
+      await db.execute(
+        'UPDATE pos_devices SET last_seen_at = NOW(), last_heartbeat_at = NOW() WHERE device_id = ?',
+        [deviceId]
       );
+      
+      console.log('✅ Device authenticated:', deviceId);
+    } else {
+      // Fall back to tenant-level authentication (backward compatibility)
+      const [tenantRows] = await db.execute(
+        'SELECT id, name, slug FROM tenants WHERE slug = ? AND pos_api_key = ?',
+        [tenantSlug, apiKey]
+      );
+
+      if (!Array.isArray(tenantRows) || tenantRows.length === 0) {
+        return NextResponse.json(
+          { error: 'Invalid tenant or API key' },
+          { status: 401 }
+        );
+      }
+
+      tenant = tenantRows[0] as any;
+      console.log('✅ Tenant authenticated (legacy):', tenant.name);
     }
 
-    const tenant = tenantRows[0] as any;
-    console.log('✅ Tenant verified:', tenant.name);
-
     // Build query conditions
+    // Pull orders that are:
+    // 1. pending - never sent via WebSocket
+    // 2. sent_to_pos - sent via WebSocket but not yet confirmed printed
+    // 3. Orders updated since last sync (for status changes)
     let whereConditions = 'WHERE o.tenant_id = ? AND o.status = ?';
     let queryParams: any[] = [tenant.id, status];
     
+    // Add print status filter - only get orders that need POS attention
+    whereConditions += ' AND (o.print_status IN (?, ?) OR o.print_status IS NULL)';
+    queryParams.push('pending', 'sent_to_pos');
+    
     // Add time filter if provided
     if (since) {
-      whereConditions += ' AND o.createdAt >= ?';
-      queryParams.push(since);
+      whereConditions += ' AND (o.createdAt >= ? OR o.updated_at >= ?)';
+      queryParams.push(since, since);
     } else {
       // Default to last 24 hours if no since parameter
       whereConditions += ' AND o.createdAt >= DATE_SUB(NOW(), INTERVAL 24 HOUR)';
@@ -86,7 +125,11 @@ export async function GET(request: NextRequest) {
         o.address,
         o.specialInstructions,
         o.createdAt,
-        o.scheduledTime
+        o.scheduledTime,
+        o.print_status,
+        o.print_status_updated_at,
+        o.websocket_sent,
+        o.websocket_sent_at
       FROM orders o 
       ${whereConditions}
       ORDER BY o.createdAt ASC
@@ -244,6 +287,7 @@ export async function GET(request: NextRequest) {
       filters: { status, since, limit },
       timestamp: new Date().toISOString(),
       lastModified: lastModified.toISOString(),
+      device_id: deviceId, // Include device ID if authenticated via device
       performance: {
         optimizedPolling: true,
         supportsConditionalRequests: true,
