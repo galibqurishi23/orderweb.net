@@ -112,10 +112,12 @@ export async function GET(request: NextRequest) {
       // When 'since' is provided, only get orders created/updated after that time
       whereConditions += ' AND (o.createdAt >= ? OR o.updated_at >= ?)';
       queryParams.push(since, since);
+    } else if (!includeAll) {
+      // Default: Get orders from last 2 months
+      // This prevents loading years of old orders while still showing recent history
+      whereConditions += ' AND o.createdAt >= DATE_SUB(NOW(), INTERVAL 2 MONTH)';
     }
-    // Note: No default time filter when include_all=false
-    // This allows POS to get ALL pending/sent_to_pos orders on initial load
-    // POS can use 'since' parameter for incremental polling after first load
+    // Note: If include_all=true, no time filter applied (get everything)
 
     // Get orders from tenant-specific database
     const [orderRows] = await tenantDb.execute(
