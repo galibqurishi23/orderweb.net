@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import db from '@/lib/db';
+import { getTenantDatabase } from '@/lib/tenant-db-connection';
 
 /**
  * Pull Orders API - Allows POS system to fetch orders on demand
@@ -12,6 +13,7 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status') || 'confirmed';
     const limit = parseInt(searchParams.get('limit') || '50');
     const since = searchParams.get('since'); // ISO date string
+    const includeAll = searchParams.get('include_all') === 'true'; // Include printed/failed orders for POS admin view
     
     // 🚀 Performance optimization headers for efficient polling
     // GET /api/pos/pull-orders?tenant=kitchen&since=2025-09-30T10:30:00Z
@@ -86,29 +88,37 @@ export async function GET(request: NextRequest) {
       console.log('✅ Tenant authenticated (legacy):', tenant.name);
     }
 
+    // Get tenant-specific database connection
+    const tenantDb = getTenantDatabase(tenant.slug);
+
     // Build query conditions
     // Pull orders that are:
     // 1. pending - never sent via WebSocket
     // 2. sent_to_pos - sent via WebSocket but not yet confirmed printed
     // 3. Orders updated since last sync (for status changes)
-    let whereConditions = 'WHERE o.tenant_id = ? AND o.status = ?';
-    let queryParams: any[] = [tenant.id, status];
+    // 4. ALL orders if include_all=true (for POS admin to see order history)
+    let whereConditions = 'WHERE o.status = ?';
+    let queryParams: any[] = [status];
     
     // Add print status filter - only get orders that need POS attention
-    whereConditions += ' AND (o.print_status IN (?, ?) OR o.print_status IS NULL)';
-    queryParams.push('pending', 'sent_to_pos');
+    // UNLESS include_all=true, then return all orders for POS admin view
+    if (!includeAll) {
+      whereConditions += ' AND (o.print_status IN (?, ?) OR o.print_status IS NULL)';
+      queryParams.push('pending', 'sent_to_pos');
+    }
     
     // Add time filter if provided
     if (since) {
+      // When 'since' is provided, only get orders created/updated after that time
       whereConditions += ' AND (o.createdAt >= ? OR o.updated_at >= ?)';
       queryParams.push(since, since);
-    } else {
-      // Default to last 24 hours if no since parameter
-      whereConditions += ' AND o.createdAt >= DATE_SUB(NOW(), INTERVAL 24 HOUR)';
     }
+    // Note: No default time filter when include_all=false
+    // This allows POS to get ALL pending/sent_to_pos orders on initial load
+    // POS can use 'since' parameter for incremental polling after first load
 
-    // Get orders
-    const [orderRows] = await db.execute(
+    // Get orders from tenant-specific database
+    const [orderRows] = await tenantDb.execute(
       `SELECT 
         o.id,
         o.orderNumber,
@@ -150,18 +160,18 @@ export async function GET(request: NextRequest) {
         },
         orders: [],
         count: 0,
-        filters: { status, since, limit },
+        filters: { status, since, limit, include_all: includeAll },
         timestamp: new Date().toISOString()
       });
     }
 
-        // Get order items for each order
+        // Get order items for each order from tenant database
         const orderIds = orders.map((order: any) => order.id);
         let orderItems: any[] = [];
         
         if (orderIds.length > 0) {
           const placeholders = orderIds.map(() => '?').join(',');
-          const [itemRows] = await db.execute(
+          const [itemRows] = await tenantDb.execute(
             `SELECT 
               oi.*,
               mi.name as menuItemName,
@@ -190,12 +200,12 @@ export async function GET(request: NextRequest) {
               ? JSON.parse(item.selectedAddons) 
               : item.selectedAddons;
             
-            // Get addon pricing information from database
+            // Get addon pricing information from tenant database
             if (parsedAddons && parsedAddons.length > 0) {
               const addonIds = parsedAddons.map((addon: any) => addon.id || addon.optionId).filter(Boolean);
               
               if (addonIds.length > 0) {
-                const [addonRows] = await db.execute(
+                const [addonRows] = await tenantDb.execute(
                   `SELECT id, name, price FROM addon_options WHERE id IN (${addonIds.map(() => '?').join(',')})`,
                   addonIds
                 );
@@ -284,7 +294,7 @@ export async function GET(request: NextRequest) {
       },
       orders: ordersWithItems,
       count: ordersWithItems.length,
-      filters: { status, since, limit },
+      filters: { status, since, limit, include_all: includeAll },
       timestamp: new Date().toISOString(),
       lastModified: lastModified.toISOString(),
       device_id: deviceId, // Include device ID if authenticated via device

@@ -42,6 +42,27 @@ async function createTenantDatabaseSchema(tenantSlug: string): Promise<void> {
     
     console.log(`✅ Successfully created database schema for tenant: ${tenantSlug}`);
     
+    // Run POS integration migrations
+    console.log(`🖨️ Running POS integration migrations for tenant: ${tenantSlug}`);
+    try {
+      const dbName = `dinedesk_${tenantSlug}`;
+      const migrationPath1 = join(process.cwd(), 'database/migrations/add_print_status_tracking.sql');
+      const migrationPath2 = join(process.cwd(), 'database/migrations/create_pos_devices_table.sql');
+      
+      // Run Phase 1 migration (print status tracking)
+      await execAsync(`mysql -u root -proot ${dbName} < ${migrationPath1}`);
+      console.log(`  ✅ Phase 1: Print status tracking added`);
+      
+      // Run Phase 2 migration (pos_devices table)
+      await execAsync(`mysql -u root -proot ${dbName} < ${migrationPath2}`);
+      console.log(`  ✅ Phase 2: POS devices table created`);
+      
+      console.log(`✅ POS migrations completed for tenant: ${tenantSlug}`);
+    } catch (migrationError) {
+      console.error(`⚠️ Warning: Could not run POS migrations for ${tenantSlug}:`, migrationError);
+      // Don't throw - POS features are optional, tenant can still be created
+    }
+    
     // Clean up temp file
     const { unlinkSync } = require('fs');
     try {
